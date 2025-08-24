@@ -3,6 +3,11 @@ edition = "2024"
 name = "kernel"
 version = "0.1.0"
 
+[profile.dev]
+lto = true
+opt-level = 3
+panic = "abort"
+
 [profile.release]
 lto = true
 opt-level = 3

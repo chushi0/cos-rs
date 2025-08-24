@@ -25,6 +25,6 @@ SECTIONS
     .other : ALIGN(8) {
         *(.dynsyn)
         *(.gnu.hash)
-        *(.strtab)
+        *(COMMON)
     }
 }

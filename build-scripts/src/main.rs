@@ -15,7 +15,11 @@ use clap::Parser;
 #[derive(clap::Parser)]
 enum BuildArgs {
     /// 完整编译项目
-    Build,
+    Build {
+        /// 以debug模式编译内核，附带符号表
+        #[arg(long)]
+        debug: bool,
+    },
     /// 运行项目
     Run {
         /// qemu附加-S -s -no-reboot、-no-shutdown参数以便调试
@@ -28,18 +32,18 @@ fn main() {
     let arg = BuildArgs::parse();
 
     match arg {
-        BuildArgs::Build => build(),
+        BuildArgs::Build { debug } => build(debug),
         BuildArgs::Run { debug } => run(debug),
     }
 }
 
-fn build() {
+fn build(debug: bool) {
     fs::create_dir_all("build").expect("failed to create build cache dir");
     compile_boot_asm();
     compile_loader();
     extract_loader_binary();
-    compile_kernel();
-    extract_kernel_binary();
+    compile_kernel(debug);
+    extract_kernel_binary(debug);
     build_image();
 }
 
@@ -106,9 +110,12 @@ fn compile_loader() {
     }
 }
 
-fn compile_kernel() {
+fn compile_kernel(debug: bool) {
     let mut cmd = Command::new("cargo");
-    cmd.arg("build").arg("--release");
+    cmd.arg("build");
+    if !debug {
+        cmd.arg("--release");
+    }
     cmd.current_dir(
         PathBuf::from_str("./kernel")
             .unwrap()
@@ -149,9 +156,14 @@ fn extract_loader_binary() {
     }
 }
 
-fn extract_kernel_binary() {
+fn extract_kernel_binary(debug: bool) {
+    let elf_path = if debug {
+        "./target/x86_64-unknown-none/debug/kernel"
+    } else {
+        "./target/x86_64-unknown-none/release/kernel"
+    };
     let mut cmd = Command::new("rust-objcopy");
-    cmd.arg("./target/x86_64-unknown-none/release/kernel")
+    cmd.arg(elf_path)
         .arg("-O")
         .arg("binary")
         .arg("./../build/kernel.bin");
