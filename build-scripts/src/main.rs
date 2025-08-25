@@ -158,9 +158,9 @@ fn extract_loader_binary() {
 
 fn extract_kernel_binary(debug: bool) {
     let elf_path = if debug {
-        "./target/x86_64-unknown-none/debug/kernel"
+        "./target/x86_64-unknown-cos/debug/kernel"
     } else {
-        "./target/x86_64-unknown-none/release/kernel"
+        "./target/x86_64-unknown-cos/release/kernel"
     };
     let mut cmd = Command::new("rust-objcopy");
     cmd.arg(elf_path)

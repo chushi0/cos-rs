@@ -53,6 +53,9 @@ pub unsafe extern "C" fn _start(bios_info: &RealBiosInfo, project_info: &Project
         panic!("cpu is not support 64bit mode");
     }
 
+    // 开启sse
+    enable_sse();
+
     // 加载内核
     load_kernel(project_info, bios_info.startup_disk);
     writeln!(vga, "finish read kernel").unwrap();
@@ -61,6 +64,23 @@ pub unsafe extern "C" fn _start(bios_info: &RealBiosInfo, project_info: &Project
     // Safety: 我们已经加载完内核，并判断CPU支持长模式，可以进入长模式
     unsafe {
         enable_64bit_mode(project_info, memory_region, bios_info.startup_disk);
+    }
+}
+
+fn enable_sse() {
+    unsafe {
+        // CR0 控制寄存器：清除 EM（bit 2）位，允许 x87/SSE
+        let mut cr0: u32;
+        asm!("mov {}, cr0", out(reg) cr0);
+        cr0 &= !(1 << 2); // 清除 EM 位
+        cr0 |= 1 << 1; // 设置 MP 位（可选，用于 x87）
+        asm!("mov cr0, {}", in(reg) cr0);
+
+        // CR4 控制寄存器：开启 OSFXSR (bit 9) 和 OSXMMEXCPT (bit 10)
+        let mut cr4: u32;
+        asm!("mov {}, cr4", out(reg) cr4);
+        cr4 |= (1 << 9) | (1 << 10);
+        asm!("mov cr4, {}", in(reg) cr4);
     }
 }
 

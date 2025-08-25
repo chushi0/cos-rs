@@ -3,7 +3,9 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(test_runner)]
 
-use core::{arch::asm, panic::PanicInfo};
+extern crate rlibc;
+
+use core::arch::asm;
 
 pub mod display;
 pub mod sync;
@@ -18,7 +20,7 @@ pub extern "C" fn kmain() -> ! {
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop_hlt();
 }
 

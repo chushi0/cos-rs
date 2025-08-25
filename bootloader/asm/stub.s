@@ -14,6 +14,6 @@
     mov gs, ax
     mov ss, ax
     ; 设置内核栈
-    mov rsp, 0xFFFF_FFFF_FFDF_FFFF
+    mov rsp, 0xFFFF_FFFF_FFDF_FFF8
     ; 调用内核kmain
     jmp 0xFFFF_FFFF_C000_0000
