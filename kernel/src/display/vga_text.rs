@@ -18,10 +18,10 @@ macro_rules! kprint {
 #[macro_export]
 macro_rules! kprintln {
     () => {
-        kprint!("\n");
+        $crate::kprint!("\n");
     };
     ($($arg:tt)*) => {
-        kprint!("{}\n", format_args!($($arg)*));
+        $crate::kprint!("{}\n", format_args!($($arg)*));
     }
 }
 
