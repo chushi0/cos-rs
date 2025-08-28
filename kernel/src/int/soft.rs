@@ -24,6 +24,7 @@ interrupt_handler! {
 }
 
 interrupt_handler! {
+    #[with_error_code]
     fn double_fault(stack: &mut StackFrameWithErrorCode) {
         kprintln!("double fault: {stack:?}");
         loop_hlt();
@@ -31,6 +32,7 @@ interrupt_handler! {
 }
 
 interrupt_handler! {
+    #[with_error_code]
     fn invalid_tss(stack: &mut StackFrameWithErrorCode) {
         kprintln!("invalid tss: {stack:?}");
         loop_hlt();
@@ -38,6 +40,7 @@ interrupt_handler! {
 }
 
 interrupt_handler! {
+    #[with_error_code]
     fn segment_not_present(stack: &mut StackFrameWithErrorCode) {
         kprintln!("segment not present: {stack:?}");
         loop_hlt();
@@ -45,6 +48,7 @@ interrupt_handler! {
 }
 
 interrupt_handler! {
+    #[with_error_code]
     fn stack_segment_fault(stack: &mut StackFrameWithErrorCode) {
         kprintln!("stack segment fault: {stack:?}");
         loop_hlt();
@@ -52,6 +56,7 @@ interrupt_handler! {
 }
 
 interrupt_handler! {
+    #[with_error_code]
     fn general_protection(stack: &mut StackFrameWithErrorCode) {
         kprintln!("general protection: {stack:?}");
         loop_hlt();
@@ -59,6 +64,7 @@ interrupt_handler! {
 }
 
 interrupt_handler! {
+    #[with_error_code]
     fn page_fault(stack: &mut StackFrameWithErrorCode) {
         kprintln!("page fault: {stack:?}");
         loop_hlt();
@@ -66,6 +72,7 @@ interrupt_handler! {
 }
 
 interrupt_handler! {
+    #[with_error_code]
     fn alignment_check(stack: &mut StackFrameWithErrorCode) {
         kprintln!("alignment check: {stack:?}");
         loop_hlt();

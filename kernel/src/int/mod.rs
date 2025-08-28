@@ -408,4 +408,49 @@ macro_rules! interrupt_handler {
             );
         }
     };
+
+    (#[with_error_code] fn $name:ident ( $stack:ident : &mut $frame:ty ) { $($body:tt)* }) => {
+        #[unsafe(naked)]
+        pub extern "C" fn $name() {
+            // 实际执行函数要写 extern "C"，否则默认是 rust-call，而rust-call的abi并未稳定
+            extern "C" fn $name($stack: &mut $frame) {
+                $($body)*
+            }
+
+            ::core::arch::naked_asm!(
+                // 保存通用寄存器
+                "push rax", "push rbx", "push rcx", "push rdx", "push rsi", "push rdi", "push rbp",
+                "push r8", "push r9", "push r10", "push r11", "push r12", "push r13", "push r14",
+                "push r15",
+
+                // 栈帧
+                "mov rbp, rsp",
+
+                // 传参
+                "mov rdi, rsp",
+
+                // 16字节对齐
+                "and rsp, 0xfffffffffffffff0",
+
+                // 调用实际处理函数
+                "call {handler}",
+
+                // 恢复栈帧
+                "mov rsp, rbp",
+
+                // 恢复通用寄存器
+                "pop r15", "pop r14", "pop r13", "pop r12", "pop r11", "pop r10", "pop r9",
+                "pop r8", "pop rbp", "pop rdi", "pop rsi", "pop rdx", "pop rcx", "pop rbx",
+                "pop rax",
+
+                // 额外弹出错误码
+                "add rsp, 8",
+
+                // 中断返回
+                "iretq",
+
+                handler = sym $name
+            );
+        }
+    };
 }
