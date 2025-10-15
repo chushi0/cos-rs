@@ -137,6 +137,8 @@ fn extract_loader_binary() {
     cmd.arg("./target/i386-unknown-none/release/bootloader")
         .arg("-O")
         .arg("binary")
+        .arg("--gap-fill")
+        .arg("0x00")
         .arg("./../build/loader.bin");
     cmd.current_dir(
         PathBuf::from_str("./bootloader")
@@ -166,6 +168,8 @@ fn extract_kernel_binary(debug: bool) {
     cmd.arg(elf_path)
         .arg("-O")
         .arg("binary")
+        .arg("--gap-fill")
+        .arg("0x00")
         .arg("./../build/kernel.bin");
     cmd.current_dir(
         PathBuf::from_str("./kernel")

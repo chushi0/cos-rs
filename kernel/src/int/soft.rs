@@ -1,3 +1,5 @@
+use core::arch::asm;
+
 use crate::{
     int::{StackFrame, StackFrameWithErrorCode},
     interrupt_handler, kprintln, loop_hlt,
@@ -66,7 +68,16 @@ interrupt_handler! {
 interrupt_handler! {
     #[with_error_code]
     fn page_fault(stack: &mut StackFrameWithErrorCode) {
-        kprintln!("page fault: {stack:?}");
+        kprintln!("page fault: {stack:x?}");
+        let fault_addr: usize;
+        unsafe {
+            asm!(
+                "mov {}, cr2",
+                out(reg) fault_addr,
+                options(nostack, preserves_flags)
+            );
+        }
+        kprintln!("fault addr: 0x{:x}", fault_addr);
         loop_hlt();
     }
 }

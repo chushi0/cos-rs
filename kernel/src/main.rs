@@ -5,14 +5,22 @@
 
 extern crate rlibc;
 
-use core::arch::asm;
+use core::{arch::asm, slice};
 
+use crate::bootloader::MemoryRegion;
+
+pub mod bootloader;
 pub mod display;
 pub mod int;
+pub mod memory;
 pub mod sync;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kmain() -> ! {
+pub extern "C" fn kmain(
+    memory_region_ptr: *const MemoryRegion,
+    memory_region_len: usize,
+    _startup_disk: u32,
+) -> ! {
     // 初始化VGA文本缓冲，并输出文本
     display::vga_text::init();
     kprintln!("Hello, kernel!");
@@ -20,24 +28,13 @@ pub extern "C" fn kmain() -> ! {
     unsafe {
         int::init();
     }
-
-    // 触发breakpoint
+    // 初始化内存
     unsafe {
-        asm!("int 3");
+        memory::physics::init(slice::from_raw_parts(memory_region_ptr, memory_region_len));
+        memory::heap::init();
     }
 
-    // int3返回后自动执行下一条指令
-    kprintln!("return from int3");
-
-    // 触发 page fault
-    // 这个不会返回，因为page fault中断返回后，会重新执行失败的指令
-    // 我们的中断处理函数没有将这个内存恢复为可访问，因此这个指令不会成功
-    // 我们仅在中断处理函数中loop_hlt以临时规避问题
-    unsafe {
-        let a = 0xdeadbeef as *mut u32;
-        *a = 0;
-    }
-
+    kprintln!("CPU hlt");
     loop_hlt();
 }
 
