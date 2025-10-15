@@ -5,10 +5,7 @@ use core::{
     ptr,
 };
 
-use crate::{
-    bootloader::MemoryRegion,
-    sync::{IrqGuard, SpinLock},
-};
+use crate::{bootloader::MemoryRegion, sync::SpinLock};
 
 /// 系统可用的内存范围
 static mut MEMORY_REGION: &[MemoryRegion] = &[];
@@ -102,20 +99,16 @@ pub unsafe fn init(memory_region: &'static [MemoryRegion]) {
 /// 直接读取指定物理内存数据
 ///
 /// 此函数会在页表中添加一个临时项，以允许访问指定物理内存。
-/// 读取期间会临时关中断，以防对页表的临时处理被打断。
 ///
 /// Safety:
-/// 该内存必须存在
+/// 该物理内存必须存在。对内存的访问不能违反Rust规则。
 pub unsafe fn read_memory<T: Sized>(address: usize, dst: &mut T) {
-    let _guard = unsafe { IrqGuard::cli() };
-
     let size = size_of::<T>();
     let mut src_start = address;
     let src_end = address + size;
     let mut dst_start = dst as *mut T as usize;
     while src_start < src_end {
-        // Safety:
-        let (start, len) = unsafe { insert_temp_page_table(src_start) };
+        let (start, len) = insert_temp_page_table(src_start);
         let len = len.min(src_end - src_start);
 
         // Safety: 我们已将物理地址加入页表，并映射为虚拟地址
@@ -131,20 +124,17 @@ pub unsafe fn read_memory<T: Sized>(address: usize, dst: &mut T) {
 /// 直接写入指定物理内存数据
 ///
 /// 此函数会在页表中添加一个临时项，以允许访问指定物理内存。
-/// 写入期间会临时关中断，以防对页表的临时处理被打断。
 ///
 /// Safety:
-/// 该内存必须存在
+/// 该物理内存必须存在。对内存的访问不能违反Rust规则。
 pub unsafe fn write_memory<T: Sized>(address: usize, src: &T) {
-    let _guard = unsafe { IrqGuard::cli() };
-
     let size = size_of::<T>();
     let mut dst_start = address;
     let dst_end = address + size;
     let mut src_start = src as *const T as usize;
     while dst_start < dst_end {
         // Safety:
-        let (start, len) = unsafe { insert_temp_page_table(dst_start) };
+        let (start, len) = insert_temp_page_table(dst_start);
         let len = len.min(dst_end - dst_start);
 
         // Safety: 我们已将物理地址加入页表，并映射为虚拟地址
@@ -158,9 +148,7 @@ pub unsafe fn write_memory<T: Sized>(address: usize, src: &T) {
 }
 
 /// 将地址插入到临时页表中，返回对应的虚拟地址及最大长度
-///
-/// Safety: 必须已经关中断
-unsafe fn insert_temp_page_table(address: usize) -> (usize, usize) {
+fn insert_temp_page_table(address: usize) -> (usize, usize) {
     // 对齐内存
     let aligned = address & 0xFFFF_FFFF_FFFF_F000;
     // 计算虚拟地址
@@ -186,7 +174,6 @@ struct FrameAllocator {
     /// 下一个待首次分配的地址，按照memory_region的位置顺序分配
     first_alloc_address: Option<NonZeroUsize>,
     /// 已经归还的内存，通过链表存储，此处仅存储链表头对应的地址
-    #[allow(unused)]
     linked_free_address: Option<NonZeroUsize>,
 }
 
@@ -225,23 +212,70 @@ impl FrameAllocator {
         self.first_alloc_address = NonZeroUsize::new(start_address);
     }
 
+    /// 分配4K物理内存，并对齐到4K
+    ///
+    /// 如果分配成功，返回物理内存的起始地址
+    /// 如果分配失败，返回None
+    ///
+    /// 注意：返回的地址是物理地址且不保证立即可用
+    /// 当需要进行访问时，需要先加入页表，或使用 [`write_memory`] / [`read_memory`] 操作
     fn alloc_frame(&mut self) -> Option<NonZeroUsize> {
         // 首先从已经释放的链表中分配
         if let Some(linked_free_address) = self.linked_free_address {
             // 将链表中下一个节点取出
             unsafe {
-                read_memory(linked_free_address.into(), &mut self.linked_free_address);
+                read_memory(linked_free_address.get(), &mut self.linked_free_address);
             }
             return Some(linked_free_address);
         }
 
-        // 从尚未分配的内存中分配
-        for memory_region in unsafe { MEMORY_REGION } {
-            // memory_region.base_addr
+        if let Some(first_alloc_address) = self.first_alloc_address {
+            // 从尚未分配的内存中分配
+            for memory_region in unsafe { MEMORY_REGION } {
+                let region_start = memory_region.base_addr;
+                let region_end = region_start + memory_region.length;
+
+                // 如果当前区域已经分配完成，则跳过当前区域
+                if region_end <= first_alloc_address.get() as u64 {
+                    continue;
+                }
+
+                // 计算分配的开始地址，取region_start与first_alloc_address较大的一个，并对齐到4K
+                let mut alloc_start = region_start.max(first_alloc_address.get() as u64);
+                if (alloc_start & 0x1000) != 0 {
+                    alloc_start = (alloc_start & 0x1000) + 0x1000;
+                }
+                // 计算分配的结束地址
+                let alloc_end = alloc_start + 0x1000;
+                // 如果结束地址超过当前区域，则跳过当前区域
+                if alloc_end > region_end {
+                    continue;
+                }
+
+                // 更新分配进度
+                self.first_alloc_address = NonZeroUsize::new(alloc_end as usize);
+
+                return NonZeroUsize::new(alloc_start as usize);
+            }
         }
 
         // 分配失败：系统已无空余内存
+        self.first_alloc_address = None;
         None
+    }
+
+    /// 回收4K物理内存，address必须为对应物理内存的起始地址
+    /// 回收后的物理内存将用于下次分配
+    ///
+    /// Safety:
+    /// address必须为有效的物理内存，且不能双重释放
+    unsafe fn delloc_frame(&mut self, address: NonZeroUsize) {
+        // 在头部添加链表
+        // Safety: 由调用者保证内存写入安全
+        unsafe {
+            write_memory(address.get(), &self.linked_free_address);
+        }
+        self.linked_free_address = Some(address);
     }
 }
 
