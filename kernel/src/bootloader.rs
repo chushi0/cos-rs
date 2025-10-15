@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct MemoryRegion {
-    base_addr: u64,
-    length: u64,
-    region_type: u32,
+    pub base_addr: u64,
+    pub length: u64,
+    pub region_type: u32,
 }

@@ -183,7 +183,7 @@ unsafe fn insert_temp_page_table(address: usize) -> (usize, usize) {
 }
 
 struct FrameAllocator {
-    /// 待首次分配的地址，按照memory_region的位置顺序分配
+    /// 下一个待首次分配的地址，按照memory_region的位置顺序分配
     first_alloc_address: Option<NonZeroUsize>,
     /// 已经归还的内存，通过链表存储，此处仅存储链表头对应的地址
     #[allow(unused)]
@@ -200,7 +200,9 @@ impl FrameAllocator {
 
     fn init(&mut self) {
         // 从KERNEL_PD和KERNEL_PT中查找当前内核已使用内存
-        let mut start_address = 0x20_0000;
+        // 注意内核栈也在页表中，且占用2M，下面的循环中重复计数，因此需要减去，
+        // 而内核起始物理内存也是2M，与内核栈刚好抵消，所以start_address为0
+        let mut start_address = 0;
         const SIZE_2M: usize = 0x20_0000;
         const SIZE_4K: usize = 0x1000;
         unsafe {
@@ -221,6 +223,25 @@ impl FrameAllocator {
         }
 
         self.first_alloc_address = NonZeroUsize::new(start_address);
+    }
+
+    fn alloc_frame(&mut self) -> Option<NonZeroUsize> {
+        // 首先从已经释放的链表中分配
+        if let Some(linked_free_address) = self.linked_free_address {
+            // 将链表中下一个节点取出
+            unsafe {
+                read_memory(linked_free_address.into(), &mut self.linked_free_address);
+            }
+            return Some(linked_free_address);
+        }
+
+        // 从尚未分配的内存中分配
+        for memory_region in unsafe { MEMORY_REGION } {
+            // memory_region.base_addr
+        }
+
+        // 分配失败：系统已无空余内存
+        None
     }
 }
 
