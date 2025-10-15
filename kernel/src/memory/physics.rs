@@ -2,7 +2,7 @@ use core::{
     arch::asm,
     num::NonZeroUsize,
     ops::{Deref, DerefMut},
-    ptr,
+    ptr::{self, NonNull},
 };
 
 use crate::{bootloader::MemoryRegion, sync::SpinLock};
@@ -242,7 +242,7 @@ impl FrameAllocator {
 
                 // 计算分配的开始地址，取region_start与first_alloc_address较大的一个，并对齐到4K
                 let mut alloc_start = region_start.max(first_alloc_address.get() as u64);
-                if (alloc_start & 0x1000) != 0 {
+                if (alloc_start & 0xFFF) != 0 {
                     alloc_start = (alloc_start & 0x1000) + 0x1000;
                 }
                 // 计算分配的结束地址
@@ -278,6 +278,34 @@ impl FrameAllocator {
         self.linked_free_address = Some(address);
     }
 }
+
+pub enum AllocFrameHint {
+    /// 堆内存，优先使用高地址空间
+    KernelHeap,
+}
+
+/// 申请页帧，并映射到虚拟地址空间
+///
+/// 该函数将申请4K内存页，并将其写入页表，从而使得内存可以使用。
+/// size为预期的内存页大小，需对齐至4K
+/// hint为对虚拟地址空间的提示，采用不同策略分配虚拟地址
+///
+/// 当函数成功时，返回内存页虚拟地址空间的起始地址。此时内存可立即使用。
+/// 当函数失败时，返回None。
+/// 如果申请了多个内存页，系统内存页未完全耗尽但不足以分配，则在返回None时，不会消耗内存页。
+pub fn alloc_mapped_frame(size: usize, hint: AllocFrameHint) -> Option<NonNull<u8>> {
+    None
+}
+
+/// 返还申请的页帧，从虚拟地址空间中移除，并等待再次分配
+///
+/// 该函数的address必须为虚拟地址空间的起始地址，size需对齐至4K
+/// 函数会自动检查对应的物理内存并正确释放。
+///
+/// Safety:
+/// address必须为[`alloc_mapped_frame`]返回的地址，且size必须与分配时一致。
+/// 任何双重释放或释放未分配的内存均会发生未定义行为
+pub unsafe fn free_mapped_frame(address: usize, size: usize) {}
 
 #[repr(C, align(4096))]
 struct PageTable([PageEntry; 512]);

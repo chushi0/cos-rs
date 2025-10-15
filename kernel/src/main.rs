@@ -31,7 +31,6 @@ pub extern "C" fn kmain(
     // 初始化内存
     unsafe {
         memory::physics::init(slice::from_raw_parts(memory_region_ptr, memory_region_len));
-        memory::heap::init();
     }
 
     kprintln!("CPU hlt");
