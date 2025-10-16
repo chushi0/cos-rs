@@ -14,11 +14,11 @@ pub mod bootloader;
 pub mod display;
 pub mod int;
 pub mod memory;
-pub mod sync;
 pub mod multitask;
+pub mod sync;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kmain(
+pub unsafe extern "C" fn kmain(
     memory_region_ptr: *const MemoryRegion,
     memory_region_len: usize,
     _startup_disk: u32,
@@ -39,7 +39,7 @@ pub extern "C" fn kmain(
     unsafe {
         sti();
     }
-    
+
     // 创建一个任务进行测试
     multitask::async_rt::spawn(async {
         loop {

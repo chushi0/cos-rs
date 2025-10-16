@@ -152,8 +152,7 @@ impl<'lock, T> Deref for SpinLockGuard<'lock, T> {
     fn deref(&self) -> &Self::Target {
         let target = self.lock.data.get();
         // Safety: SpinLock的原子变量已经保证只有一个访问者
-        let target = unsafe { &*target };
-        target
+        unsafe { &*target }
     }
 }
 
@@ -161,8 +160,7 @@ impl<'lock, T> DerefMut for SpinLockGuard<'lock, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let target = self.lock.data.get();
         // Safety: SpinLock的原子变量已经保证只有一个访问者
-        let target = unsafe { &mut *target };
-        target
+        unsafe { &mut *target }
     }
 }
 

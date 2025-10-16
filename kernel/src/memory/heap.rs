@@ -94,13 +94,11 @@ impl KernelHeap {
         }
 
         // 从链表中取出一个元素
-        let ptr = unsafe {
+        unsafe {
             let ptr = (*new_page).free_ptr;
             (*new_page).free_ptr = (*ptr).next;
             ptr as *mut u8
-        };
-
-        ptr
+        }
     }
 
     unsafe fn deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) {

@@ -5,58 +5,58 @@ use core::{
 };
 
 use crate::{
-    int::{StackFrame, IDT},
+    int::{Idt, StackFrame},
     interrupt_handler, kprintln, multitask,
 };
 
 // 定时器 PIT Channel 0
 const IRQ_TIMER: u8 = 0;
-pub const INDEX_TIMER: usize = IDT::INDEX_USER_DEFINED + 0;
+pub const INDEX_TIMER: usize = Idt::INDEX_USER_DEFINED;
 // 键盘 PS/2 Keyboard
 const IRQ_KEYBOARD: u8 = 1;
-pub const INDEX_KEYBOARD: usize = IDT::INDEX_USER_DEFINED + 1;
+pub const INDEX_KEYBOARD: usize = Idt::INDEX_USER_DEFINED + 1;
 // 连接从片PIC
 const IRQ_CASCADE: u8 = 2;
-pub const INDEX_CASCADE: usize = IDT::INDEX_USER_DEFINED + 2;
+pub const INDEX_CASCADE: usize = Idt::INDEX_USER_DEFINED + 2;
 // 串口2
 const IRQ_COM2: u8 = 3;
-pub const INDEX_COM2: usize = IDT::INDEX_USER_DEFINED + 3;
+pub const INDEX_COM2: usize = Idt::INDEX_USER_DEFINED + 3;
 // 串口1
 const IRQ_COM1: u8 = 4;
-pub const INDEX_COM1: usize = IDT::INDEX_USER_DEFINED + 4;
+pub const INDEX_COM1: usize = Idt::INDEX_USER_DEFINED + 4;
 // LPT2或PS/2鼠标
 const IRQ_LPT2: u8 = 5;
-pub const INDEX_LPT2: usize = IDT::INDEX_USER_DEFINED + 5;
+pub const INDEX_LPT2: usize = Idt::INDEX_USER_DEFINED + 5;
 // 硬盘控制器
 const IRQ_DISK: u8 = 6;
-pub const INDEX_DISK: usize = IDT::INDEX_USER_DEFINED + 6;
+pub const INDEX_DISK: usize = Idt::INDEX_USER_DEFINED + 6;
 // LPT1
 const IRQ_LPT1: u8 = 7;
-pub const INDEX_LPT1: usize = IDT::INDEX_USER_DEFINED + 7;
+pub const INDEX_LPT1: usize = Idt::INDEX_USER_DEFINED + 7;
 // 实时时钟 RTC
 const IRQ_RTC: u8 = 8;
-pub const INDEX_RTC: usize = IDT::INDEX_USER_DEFINED + 8;
+pub const INDEX_RTC: usize = Idt::INDEX_USER_DEFINED + 8;
 // ACPI或可编程用途
 const IRQ_ACPI: u8 = 9;
-pub const INDEX_ACPI: usize = IDT::INDEX_USER_DEFINED + 9;
+pub const INDEX_ACPI: usize = Idt::INDEX_USER_DEFINED + 9;
 // 可编程用途
 const IRQ_PCI1: u8 = 10;
-pub const INDEX_PCI1: usize = IDT::INDEX_USER_DEFINED + 10;
+pub const INDEX_PCI1: usize = Idt::INDEX_USER_DEFINED + 10;
 // 可编程用途
 const IRQ_PCI2: u8 = 11;
-pub const INDEX_PCI2: usize = IDT::INDEX_USER_DEFINED + 11;
+pub const INDEX_PCI2: usize = Idt::INDEX_USER_DEFINED + 11;
 // PS/2 鼠标
 const IRQ_MOUSE: u8 = 12;
-pub const INDEX_MOUSE: usize = IDT::INDEX_USER_DEFINED + 12;
+pub const INDEX_MOUSE: usize = Idt::INDEX_USER_DEFINED + 12;
 // 协处理器 FPU/Coprocessor
 const IRQ_FPU: u8 = 13;
-pub const INDEX_FPU: usize = IDT::INDEX_USER_DEFINED + 13;
+pub const INDEX_FPU: usize = Idt::INDEX_USER_DEFINED + 13;
 // 主IDE通道
 const IRQ_IDE1: u8 = 14;
-pub const INDEX_IDE1: usize = IDT::INDEX_USER_DEFINED + 14;
+pub const INDEX_IDE1: usize = Idt::INDEX_USER_DEFINED + 14;
 // 主IDE通道
 const IRQ_IDE2: u8 = 15;
-pub const INDEX_IDE2: usize = IDT::INDEX_USER_DEFINED + 15;
+pub const INDEX_IDE2: usize = Idt::INDEX_USER_DEFINED + 15;
 
 const PIC1_COMMAND: u32 = 0x20;
 const PIC2_COMMAND: u32 = 0xA0;
@@ -72,13 +72,13 @@ pub unsafe fn init() {
         asm!(
             "out dx, al",
             in("dx") PIC1_COMMAND,
-            in("al") 0x11 as i8,
+            in("al") 0x11i8,
             options(nostack, preserves_flags)
         );
         asm!(
             "out dx, al",
             in("dx") PIC2_COMMAND,
-            in("al") 0x11 as i8,
+            in("al") 0x11i8,
             options(nostack, preserves_flags)
         );
     }
@@ -90,13 +90,13 @@ pub unsafe fn init() {
         asm!(
             "out dx, al",
             in("dx") PIC1_DATA,
-            in("al") 32 as i8,
+            in("al") 32i8,
             options(nostack, preserves_flags)
         );
         asm!(
             "out dx, al",
             in("dx") PIC2_DATA,
-            in("al") 40 as i8,
+            in("al") 40i8,
             options(nostack, preserves_flags)
         );
     }
@@ -109,13 +109,13 @@ pub unsafe fn init() {
         asm!(
             "out dx, al",
             in("dx") PIC1_DATA,
-            in("al") 0x04 as i8,
+            in("al") 0x04i8,
             options(nostack, preserves_flags)
         );
         asm!(
             "out dx, al",
             in("dx") PIC2_DATA,
-            in("al") 0x02 as i8,
+            in("al") 0x02i8,
             options(nostack, preserves_flags)
         );
     }
@@ -127,13 +127,13 @@ pub unsafe fn init() {
         asm!(
             "out dx, al",
             in("dx") PIC1_DATA,
-            in("al") 0x01 as i8,
+            in("al") 0x01i8,
             options(nostack, preserves_flags)
         );
         asm!(
             "out dx, al",
             in("dx") PIC2_DATA,
-            in("al") 0x01 as i8,
+            in("al") 0x01i8,
             options(nostack, preserves_flags)
         );
     }
@@ -144,13 +144,13 @@ pub unsafe fn init() {
         asm!(
             "out dx, al",
             in("dx") PIC1_DATA,
-            in("al") 0b11111100 as u8,
+            in("al") 0b11111100u8,
             options(nostack, preserves_flags)
         );
         asm!(
             "out dx, al",
             in("dx") PIC2_DATA,
-            in("al") 0b11111111 as u8,
+            in("al") 0b11111111u8,
             options(nostack, preserves_flags)
         );
     }
@@ -164,7 +164,7 @@ unsafe fn send_eoi(irq: u8) {
             asm!(
                 "out dx, al",
                 in("dx") PIC2_COMMAND,
-                in("al") 0x20 as i8,
+                in("al") 0x20i8,
                 options(nostack, preserves_flags)
             );
         }
@@ -174,7 +174,7 @@ unsafe fn send_eoi(irq: u8) {
         asm!(
             "out dx, al",
             in("dx") PIC1_COMMAND,
-            in("al") 0x20 as i8,
+            in("al") 0x20i8,
             options(nostack, preserves_flags)
         );
     }
@@ -191,7 +191,7 @@ fn set_timer_interval(n: NonZeroU16) {
         asm!(
             "out dx, al",
             in("dx") 0x43,
-            in("al") 0x36 as i8,
+            in("al") 0x36i8,
             options(nostack, preserves_flags)
         );
         asm!(

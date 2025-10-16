@@ -9,13 +9,13 @@ mod soft;
 
 /// 中断描述符表
 #[repr(transparent)]
-struct IDT([IDTEntry; 256]);
+struct Idt([IDTEntry; 256]);
 
 /// 中断描述符表寄存器
 #[repr(C, packed)]
-struct IDTR<'idt> {
+struct Idtr<'idt> {
     limit: u16,
-    base: &'idt IDT,
+    base: &'idt Idt,
 }
 
 /// 中断描述符表中的每一项
@@ -99,7 +99,7 @@ struct StackFrameWithErrorCode {
 }
 
 /// 主CPU的中断描述符表
-static mut MAIN_CPU_IDT: IDT = IDT::new();
+static mut MAIN_CPU_IDT: Idt = Idt::new();
 
 /// 初始化中断
 ///
@@ -107,28 +107,28 @@ static mut MAIN_CPU_IDT: IDT = IDT::new();
 pub unsafe fn init() {
     // Safety: 由调用者保证无并发
     unsafe {
-        MAIN_CPU_IDT[IDT::INDEX_DIVIDE_ERROR].set_function_pointer(soft::divide_by_zero);
-        MAIN_CPU_IDT[IDT::INDEX_DIVIDE_ERROR].enable();
-        MAIN_CPU_IDT[IDT::INDEX_BREAKPOINT].set_function_pointer(soft::breakpoint);
-        MAIN_CPU_IDT[IDT::INDEX_BREAKPOINT].enable();
-        MAIN_CPU_IDT[IDT::INDEX_INVALID_OPCODE].set_function_pointer(soft::invalid_opcode);
-        MAIN_CPU_IDT[IDT::INDEX_INVALID_OPCODE].enable();
-        MAIN_CPU_IDT[IDT::INDEX_DOUBLE_FAULT].set_function_pointer(soft::double_fault);
-        MAIN_CPU_IDT[IDT::INDEX_DOUBLE_FAULT].enable();
-        MAIN_CPU_IDT[IDT::INDEX_INVALID_TSS].set_function_pointer(soft::invalid_tss);
-        MAIN_CPU_IDT[IDT::INDEX_INVALID_TSS].enable();
-        MAIN_CPU_IDT[IDT::INDEX_SEGMENT_NOT_PRESENT]
+        MAIN_CPU_IDT[Idt::INDEX_DIVIDE_ERROR].set_function_pointer(soft::divide_by_zero);
+        MAIN_CPU_IDT[Idt::INDEX_DIVIDE_ERROR].enable();
+        MAIN_CPU_IDT[Idt::INDEX_BREAKPOINT].set_function_pointer(soft::breakpoint);
+        MAIN_CPU_IDT[Idt::INDEX_BREAKPOINT].enable();
+        MAIN_CPU_IDT[Idt::INDEX_INVALID_OPCODE].set_function_pointer(soft::invalid_opcode);
+        MAIN_CPU_IDT[Idt::INDEX_INVALID_OPCODE].enable();
+        MAIN_CPU_IDT[Idt::INDEX_DOUBLE_FAULT].set_function_pointer(soft::double_fault);
+        MAIN_CPU_IDT[Idt::INDEX_DOUBLE_FAULT].enable();
+        MAIN_CPU_IDT[Idt::INDEX_INVALID_TSS].set_function_pointer(soft::invalid_tss);
+        MAIN_CPU_IDT[Idt::INDEX_INVALID_TSS].enable();
+        MAIN_CPU_IDT[Idt::INDEX_SEGMENT_NOT_PRESENT]
             .set_function_pointer(soft::segment_not_present);
-        MAIN_CPU_IDT[IDT::INDEX_SEGMENT_NOT_PRESENT].enable();
-        MAIN_CPU_IDT[IDT::INDEX_STACK_SEGMENT_FAULT]
+        MAIN_CPU_IDT[Idt::INDEX_SEGMENT_NOT_PRESENT].enable();
+        MAIN_CPU_IDT[Idt::INDEX_STACK_SEGMENT_FAULT]
             .set_function_pointer(soft::stack_segment_fault);
-        MAIN_CPU_IDT[IDT::INDEX_STACK_SEGMENT_FAULT].enable();
-        MAIN_CPU_IDT[IDT::INDEX_GENERAL_PROTECTION].set_function_pointer(soft::general_protection);
-        MAIN_CPU_IDT[IDT::INDEX_GENERAL_PROTECTION].enable();
-        MAIN_CPU_IDT[IDT::INDEX_PAGE_FAULT].set_function_pointer(soft::page_fault);
-        MAIN_CPU_IDT[IDT::INDEX_PAGE_FAULT].enable();
-        MAIN_CPU_IDT[IDT::INDEX_ALIGNMENT_CHECK].set_function_pointer(soft::alignment_check);
-        MAIN_CPU_IDT[IDT::INDEX_ALIGNMENT_CHECK].enable();
+        MAIN_CPU_IDT[Idt::INDEX_STACK_SEGMENT_FAULT].enable();
+        MAIN_CPU_IDT[Idt::INDEX_GENERAL_PROTECTION].set_function_pointer(soft::general_protection);
+        MAIN_CPU_IDT[Idt::INDEX_GENERAL_PROTECTION].enable();
+        MAIN_CPU_IDT[Idt::INDEX_PAGE_FAULT].set_function_pointer(soft::page_fault);
+        MAIN_CPU_IDT[Idt::INDEX_PAGE_FAULT].enable();
+        MAIN_CPU_IDT[Idt::INDEX_ALIGNMENT_CHECK].set_function_pointer(soft::alignment_check);
+        MAIN_CPU_IDT[Idt::INDEX_ALIGNMENT_CHECK].enable();
 
         hard::init();
 
@@ -189,7 +189,7 @@ impl IDTEntry {
 }
 
 #[allow(unused)]
-impl IDT {
+impl Idt {
     /// Divide Error (#DE, Fault)
     ///
     /// # Source
@@ -351,7 +351,7 @@ impl IDT {
     ///
     /// Safety: 调用方需保证调用此函数后，中断描述符表不会被释放或被覆盖
     unsafe fn load(&'static self) {
-        let idtr = IDTR {
+        let idtr = Idtr {
             limit: (size_of::<Self>() - 1) as u16,
             base: self,
         };
@@ -362,7 +362,7 @@ impl IDT {
     }
 }
 
-impl Deref for IDT {
+impl Deref for Idt {
     type Target = [IDTEntry; 256];
 
     fn deref(&self) -> &Self::Target {
@@ -370,7 +370,7 @@ impl Deref for IDT {
     }
 }
 
-impl DerefMut for IDT {
+impl DerefMut for Idt {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }

@@ -81,10 +81,10 @@ impl Future for Sleep {
                 let mut queue = SLEEP_WAKE_QUEUE.lock();
                 queue.push(wake);
 
-                return Poll::Pending;
+                Poll::Pending
             }
-            FLAG_SLEEP => return Poll::Pending,
-            FLAG_WAKE => return Poll::Ready(()),
+            FLAG_SLEEP => Poll::Pending,
+            FLAG_WAKE => Poll::Ready(()),
             _ => unreachable!(),
         }
     }
