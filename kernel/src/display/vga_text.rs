@@ -183,6 +183,7 @@ impl VgaTextWriter {
             }
             self.buffer[(Self::WIDTH * (Self::HEIGHT - 1))..]
                 .fill(Self::with_style(self.style, b' '));
+            self.cursor.0 -= 1;
         }
     }
 }

@@ -419,7 +419,7 @@ fn find_kernel_free_virtual_memory(block: usize) -> Option<NonZeroUsize> {
             // 查看PT
             for pt_index in 0..pt.len() {
                 // 如果当前entry无效，则4K空间是可用的
-                if pt[pt_index].present() {
+                if !pt[pt_index].present() {
                     if remain <= 1 {
                         return NonZeroUsize::new(start);
                     }

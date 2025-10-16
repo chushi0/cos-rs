@@ -8,7 +8,7 @@ extern crate rlibc;
 
 use core::{arch::asm, slice};
 
-use alloc::vec;
+use alloc::vec::Vec;
 
 use crate::bootloader::MemoryRegion;
 
@@ -39,8 +39,11 @@ pub extern "C" fn kmain(
     kprintln!("initialized memory");
 
     // 尝试使用堆数据类型
-    let array = vec![1, 2, 3];
-    kprintln!("array: {array:?}, addr: {:?}", array.as_ptr());
+    let mut array = Vec::new();
+    for i in 0..15 {
+        array.push(i);
+        kprintln!("array: {array:?}, addr: {:?}", array.as_ptr());
+    }
 
     kprintln!("CPU hlt");
     loop_hlt();
