@@ -3,6 +3,8 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
+#[allow(unused)]
+mod hard;
 mod soft;
 
 /// 中断描述符表
@@ -127,6 +129,15 @@ pub unsafe fn init() {
         MAIN_CPU_IDT[IDT::INDEX_PAGE_FAULT].enable();
         MAIN_CPU_IDT[IDT::INDEX_ALIGNMENT_CHECK].set_function_pointer(soft::alignment_check);
         MAIN_CPU_IDT[IDT::INDEX_ALIGNMENT_CHECK].enable();
+
+        hard::init();
+
+        MAIN_CPU_IDT[hard::INDEX_TIMER].set_function_pointer(hard::timer_irq);
+        MAIN_CPU_IDT[hard::INDEX_TIMER].disable_interrupt();
+        MAIN_CPU_IDT[hard::INDEX_TIMER].enable();
+        MAIN_CPU_IDT[hard::INDEX_KEYBOARD].set_function_pointer(hard::keyboard_irq);
+        MAIN_CPU_IDT[hard::INDEX_KEYBOARD].disable_interrupt();
+        MAIN_CPU_IDT[hard::INDEX_KEYBOARD].enable();
 
         (&*(&raw const MAIN_CPU_IDT)).load();
     }

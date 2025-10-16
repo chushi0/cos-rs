@@ -10,7 +10,7 @@ use core::{arch::asm, slice};
 
 use alloc::vec::Vec;
 
-use crate::bootloader::MemoryRegion;
+use crate::{bootloader::MemoryRegion, sync::sti};
 
 pub mod bootloader;
 pub mod display;
@@ -45,7 +45,11 @@ pub extern "C" fn kmain(
         kprintln!("array: {array:?}, addr: {:?}", array.as_ptr());
     }
 
-    kprintln!("CPU hlt");
+    kprintln!("CPU will hlt, open interrupt...");
+    // 开中断
+    unsafe {
+        sti();
+    }
     loop_hlt();
 }
 
