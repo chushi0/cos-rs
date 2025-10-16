@@ -83,11 +83,12 @@ impl KernelHeap {
             (*new_page).page_size = HEAP_SIZE_CLASSES[index];
             (*new_page).next = self.bucket[index];
             (*new_page).free_ptr = ptr::null_mut();
-            let mut free_ptr = new_page.add(32.max(HEAP_SIZE_CLASSES[index])) as *mut NodeFreeBody;
+            let mut free_ptr =
+                (new_page as usize + 32.max(HEAP_SIZE_CLASSES[index])) as *mut NodeFreeBody;
             while (free_ptr as usize) < (new_page as usize + 0x1000) {
                 (*free_ptr).next = (*new_page).free_ptr;
                 (*new_page).free_ptr = free_ptr;
-                free_ptr = free_ptr.add(HEAP_SIZE_CLASSES[index]);
+                free_ptr = (free_ptr as usize + HEAP_SIZE_CLASSES[index]) as *mut NodeFreeBody;
             }
             self.bucket[index] = new_page;
         }

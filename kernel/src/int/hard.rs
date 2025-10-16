@@ -5,8 +5,8 @@ use core::{
 };
 
 use crate::{
-    int::{IDT, StackFrame},
-    interrupt_handler, kprintln,
+    int::{StackFrame, IDT},
+    interrupt_handler, kprintln, multitask,
 };
 
 // 定时器 PIT Channel 0
@@ -211,11 +211,9 @@ fn set_timer_interval(n: NonZeroU16) {
 
 interrupt_handler! {
     fn timer_irq(stack: &mut StackFrame) {
-        static TICKER: AtomicU32 = AtomicU32::new(0);
-        let count = TICKER.fetch_add(1, Ordering::Relaxed);
-        if count % 20 == 0 {
-            kprintln!("timer tick: {count}");
-        }
+        const ELAPSED: u64 = 1_000_000 * 65535 / TIMER_FREQUENCY as u64;
+
+        multitask::async_task::tick(ELAPSED);
 
         unsafe {
             send_eoi(IRQ_TIMER);

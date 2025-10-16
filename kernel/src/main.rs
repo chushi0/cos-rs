@@ -6,9 +6,7 @@
 extern crate alloc;
 extern crate rlibc;
 
-use core::{arch::asm, slice};
-
-use alloc::vec::Vec;
+use core::{arch::asm, slice, time::Duration};
 
 use crate::{bootloader::MemoryRegion, sync::sti};
 
@@ -17,6 +15,7 @@ pub mod display;
 pub mod int;
 pub mod memory;
 pub mod sync;
+pub mod multitask;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain(
@@ -36,21 +35,20 @@ pub extern "C" fn kmain(
         memory::physics::init(slice::from_raw_parts(memory_region_ptr, memory_region_len));
     }
 
-    kprintln!("initialized memory");
-
-    // 尝试使用堆数据类型
-    let mut array = Vec::new();
-    for i in 0..15 {
-        array.push(i);
-        kprintln!("array: {array:?}, addr: {:?}", array.as_ptr());
-    }
-
-    kprintln!("CPU will hlt, open interrupt...");
     // 开中断
     unsafe {
         sti();
     }
-    loop_hlt();
+    
+    // 创建一个任务进行测试
+    multitask::async_rt::spawn(async {
+        loop {
+            multitask::async_task::sleep(Duration::from_secs(1)).await;
+            kprintln!("time elapsed");
+        }
+    });
+
+    multitask::async_rt::run()
 }
 
 #[panic_handler]

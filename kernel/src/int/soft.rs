@@ -20,7 +20,7 @@ interrupt_handler! {
 
 interrupt_handler! {
     fn invalid_opcode(stack: &mut StackFrame) {
-        kprintln!("invalid opcode: {stack:?}");
+        kprintln!("invalid opcode: {stack:x?}");
         loop_hlt();
     }
 }
