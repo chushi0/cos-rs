@@ -49,7 +49,7 @@ impl KernelHeap {
         };
 
         // 如果桶越界了，说明申请超过4K内存，我们直接申请对应内存页
-        if index > HEAP_SIZE_CLASSES.len() {
+        if index >= HEAP_SIZE_CLASSES.len() {
             let mut size = layout.size();
             if (size & 0xFFF) != 0 {
                 size = (size & 0xFFF) + 0x1000;
