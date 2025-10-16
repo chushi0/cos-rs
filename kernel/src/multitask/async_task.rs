@@ -44,7 +44,8 @@ impl Eq for WakeQueue {}
 
 impl Ord for WakeQueue {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.wake_time.cmp(&other.wake_time)
+        // 反转比较顺序，因为我们要把WakeQueue放入BinaryHeap中，而BinaryHeap是max-heap，我们需要的是min-heap
+        other.wake_time.cmp(&self.wake_time)
     }
 }
 

@@ -44,7 +44,13 @@ pub unsafe extern "C" fn kmain(
     multitask::async_rt::spawn(async {
         loop {
             multitask::async_task::sleep(Duration::from_secs(1)).await;
-            kprintln!("time elapsed");
+            kprintln!("time elapsed A");
+        }
+    });
+    multitask::async_rt::spawn(async {
+        loop {
+            multitask::async_task::sleep(Duration::from_secs(3)).await;
+            kprintln!("time elapsed B");
         }
     });
 
