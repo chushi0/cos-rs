@@ -6,7 +6,7 @@ use core::{
     ptr::{self, NonNull},
 };
 
-use crate::{bootloader::MemoryRegion, sync::SpinLock};
+use crate::{bootloader::MemoryRegion, kprintln, sync::SpinLock};
 
 /// 系统可用的内存范围
 static mut MEMORY_REGION: &[MemoryRegion] = &[];
@@ -89,6 +89,19 @@ pub unsafe fn init(memory_region: &'static [MemoryRegion]) {
         KERNEL_PD = Some(kernel_pd);
         KERNEL_PT = kernel_pt;
     };
+
+    kprintln!(
+        "memory ptr: {:?}, len: {}",
+        memory_region.as_ptr(),
+        memory_region.len()
+    );
+    for memory_region in memory_region {
+        kprintln!(
+            "memory: 0x{:x} - 0x{:x}",
+            unsafe { ptr::read_unaligned(&raw const memory_region.base_addr) },
+            memory_region.base_addr + memory_region.length
+        );
+    }
 
     // 初始化页帧分配器
     unsafe {

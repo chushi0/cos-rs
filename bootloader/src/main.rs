@@ -47,6 +47,16 @@ pub unsafe extern "C" fn _start(bios_info: &RealBiosInfo, project_info: &Project
 
     // 规整内存
     memory_region = normalize_memory_region(memory_region);
+    writeln!(vga, "memory ptr: {:?}", memory_region.as_ptr()).unwrap();
+    for memory_region in memory_region.iter() {
+        writeln!(
+            vga,
+            "memory: 0x{:x} - 0x{:x}",
+            memory_region.base_addr,
+            memory_region.base_addr + memory_region.length
+        )
+        .unwrap();
+    }
 
     // 检测CPU是否为64位
     if !test_cpu_is_support_64bit() {
