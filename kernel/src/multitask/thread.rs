@@ -13,8 +13,11 @@ use alloc::{
 
 use crate::{kprintln, sync::SpinLock};
 
+#[allow(unused)]
 static THREADS: SpinLock<BTreeMap<u64, Arc<SpinLock<Thread>>>> = SpinLock::new(BTreeMap::new());
+#[allow(unused)]
 static READY_THREADS: SpinLock<VecDeque<Weak<SpinLock<Thread>>>> = SpinLock::new(VecDeque::new());
+#[allow(unused)]
 static THREAD_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
 pub struct Thread {
@@ -85,7 +88,7 @@ unsafe fn switch_to_context(context: *const Context) -> ! {
 ///
 /// Safety:
 /// 调用方需保证目标上下文是可访问的，并且调用方所持有的对象不会影响其他线程的运行
-unsafe fn switch_thread(from: *mut Context, to: *const Context) {
+unsafe extern "C" fn switch_thread(from: *mut Context, to: *const Context) {
     unsafe extern "C" fn copy_context(src: *const Context, dst: *mut Context) {
         unsafe {
             *dst = ptr::read(src);
@@ -102,8 +105,10 @@ unsafe fn switch_thread(from: *mut Context, to: *const Context) {
             "push rdi",
             "push rsi",
             // 压入上下文，调用其他函数进行复制，避免在汇编中手写偏移
-            "push [rsp+16]", // rsp
-            "push rax",      // rip
+            "mov rcx, [rsp+16]",
+            "add rcx, 8",
+            "push rcx", // rsp
+            "push rax", // rip
             "push rbx",
             "push rbp",
             "push r12",
@@ -153,43 +158,20 @@ pub fn test_thread_switch() {
     }
 
     extern "C" fn thread_a() -> ! {
-        kprintln!("in thread a");
-        let mut i = 0;
         loop {
+            kprintln!("in thread a");
             unsafe {
                 switch_thread(&raw mut CTX1, &raw const CTX2);
             }
-            i += 1;
-            // FIXME: 加上这行输出就死锁
-            // kprintln!("running a {i}");
-            if i > 2 {
-                break;
-            }
-        }
-
-        unsafe {
-            asm!("ud2", options(noreturn));
         }
     }
 
     extern "C" fn thread_b() -> ! {
-        kprintln!("in thread b");
-        let mut i = 0;
         loop {
+            kprintln!("in thread b");
             unsafe {
                 switch_thread(&raw mut CTX2, &raw const CTX1);
             }
-            i += 1;
-            unsafe {
-                asm!("int 3");
-            }
-            if i > 2 {
-                break;
-            }
-        }
-
-        unsafe {
-            asm!("ud2", options(noreturn));
         }
     }
 }
