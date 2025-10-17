@@ -54,6 +54,8 @@ pub unsafe extern "C" fn kmain(
         }
     });
 
+    multitask::thread::test_thread_switch();
+
     multitask::async_rt::run()
 }
 

@@ -14,7 +14,7 @@ interrupt_handler! {
 
 interrupt_handler! {
     fn breakpoint(stack: &mut StackFrame) {
-        kprintln!("breakpoint: {stack:?}");
+        kprintln!("breakpoint: {stack:x?}");
     }
 }
 
