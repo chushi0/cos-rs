@@ -14,6 +14,22 @@ use crate::{
 static KERNEL_HEAP: SpinLock<KernelHeap> = SpinLock::new(KernelHeap::uninit());
 
 const HEAP_SIZE_CLASSES: [usize; 9] = [8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+const HEAP_FREE_COUNT: [u64; 9] = [
+    free_count(8),
+    free_count(16),
+    free_count(32),
+    free_count(64),
+    free_count(128),
+    free_count(256),
+    free_count(512),
+    free_count(1024),
+    free_count(2048),
+];
+
+const fn free_count(size: usize) -> u64 {
+    ((0x1000 - size_of::<HeapNodeHead>()) / size) as u64
+}
+
 struct KernelHeap {
     bucket: [*mut HeapNodeHead; 9],
 }
@@ -44,7 +60,8 @@ impl KernelHeap {
     }
 
     fn get_bucket_index_by_layout(layout: Layout) -> usize {
-        match HEAP_SIZE_CLASSES.binary_search(&layout.size()) {
+        let effective = layout.align().max(layout.size());
+        match HEAP_SIZE_CLASSES.binary_search(&effective) {
             Ok(bucket) => bucket,  // 刚好是我们预期的大小，使用这个桶
             Err(bucket) => bucket, // 不是我们预期的大小，binary_search会返回稍大的那一个，所以可以直接使用这个桶
         }
@@ -55,9 +72,9 @@ impl KernelHeap {
 
         // 如果桶越界了，说明申请超过4K内存，我们直接申请对应内存页
         if index >= HEAP_SIZE_CLASSES.len() {
-            let mut size = layout.size();
+            let mut size = layout.align().max(layout.size());
             if (size & 0xFFF) != 0 {
-                size = (size & 0xFFF) + 0x1000;
+                size = (size & !0xFFF) + 0x1000;
             }
             return match memory::physics::alloc_mapped_frame(size, AllocFrameHint::KernelHeap) {
                 Some(ptr) => ptr.as_ptr(),
@@ -79,9 +96,10 @@ impl KernelHeap {
                 self.bucket[index] = new_page;
 
                 (*new_page).free_ptr = ptr::null_mut();
-                (*new_page).free_count = (0x1000 / HEAP_SIZE_CLASSES[index] - 1) as u64;
-                let mut free_ptr =
-                    (new_page as usize + 32.max(HEAP_SIZE_CLASSES[index])) as *mut NodeFreeBody;
+                (*new_page).free_count = HEAP_FREE_COUNT[index];
+                let mut free_ptr = (new_page as usize
+                    + HEAP_SIZE_CLASSES[index].max(size_of::<HeapNodeHead>()))
+                    as *mut NodeFreeBody;
                 while (free_ptr as usize) < (new_page as usize + 0x1000) {
                     (*free_ptr).next = (*new_page).free_ptr;
                     (*new_page).free_ptr = free_ptr;
@@ -112,9 +130,9 @@ impl KernelHeap {
 
         // 如果对齐到4K，说明之前申请的完整的一页内存，直接交还给page frame
         if (ptr as usize & 0xFFF) == 0 {
-            let mut size = layout.size();
+            let mut size = layout.align().max(layout.size());
             if (size & 0xFFF) != 0 {
-                size = (size & 0x1000) + 0x1000;
+                size = (size & !0xFFF) + 0x1000;
             }
             unsafe {
                 memory::physics::free_mapped_frame(ptr as usize, size);
@@ -142,8 +160,7 @@ impl KernelHeap {
                 self.bucket[index] = head;
             }
             // 如果当前块全部释放，则返还page frame
-            let max_free_count = (0x1000 / HEAP_SIZE_CLASSES[index] - 1) as u64;
-            if (*head).free_count == max_free_count {
+            if (*head).free_count == HEAP_FREE_COUNT[index] {
                 if (*head).prev.is_null() {
                     self.bucket[index] = (*head).next;
                     if !self.bucket[index].is_null() {
