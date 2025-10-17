@@ -18,8 +18,9 @@ struct KernelHeap {
     bucket: [*mut HeapNodeHead; 9],
 }
 
+// 使用双向链表管理空闲内存
 struct HeapNodeHead {
-    index: usize,
+    prev: *mut HeapNodeHead,
     next: *mut HeapNodeHead,
     free_ptr: *mut NodeFreeBody,
     free_count: u64,
@@ -42,11 +43,15 @@ impl KernelHeap {
         }
     }
 
-    fn allocate(&mut self, layout: Layout) -> *mut u8 {
-        let index = match HEAP_SIZE_CLASSES.binary_search(&layout.size()) {
+    fn get_bucket_index_by_layout(layout: Layout) -> usize {
+        match HEAP_SIZE_CLASSES.binary_search(&layout.size()) {
             Ok(bucket) => bucket,  // 刚好是我们预期的大小，使用这个桶
             Err(bucket) => bucket, // 不是我们预期的大小，binary_search会返回稍大的那一个，所以可以直接使用这个桶
-        };
+        }
+    }
+
+    fn allocate(&mut self, layout: Layout) -> *mut u8 {
+        let index = Self::get_bucket_index_by_layout(layout);
 
         // 如果桶越界了，说明申请超过4K内存，我们直接申请对应内存页
         if index >= HEAP_SIZE_CLASSES.len() {
@@ -60,55 +65,43 @@ impl KernelHeap {
             };
         }
 
-        // 从堆中寻找空闲内存进行分配
-        let mut bucket = self.bucket[index];
-        while !bucket.is_null() {
-            let node_head = unsafe { &mut *bucket };
-            if !node_head.free_ptr.is_null() {
-                let allocated_ptr = node_head.free_ptr as *mut u8;
-                node_head.free_ptr = unsafe { (*node_head.free_ptr).next };
-                node_head.free_count -= 1;
-                // 如果分配完成后，当前块已经没有空余内存，则移出链表
-                if node_head.free_count > 0 {
-                    self.bucket[index] = bucket;
-                } else {
-                    self.bucket[index] = node_head.next;
-                }
-                return allocated_ptr;
-            }
-            bucket = node_head.next;
-        }
-
         // 桶内的内存不足，申请新内存页
-        let new_page = match alloc_mapped_frame(0x1000, AllocFrameHint::KernelHeap) {
-            Some(ptr) => ptr.as_ptr(),
-            None => return ptr::null_mut(),
-        } as *mut HeapNodeHead;
+        if self.bucket[index].is_null() {
+            let new_page = match alloc_mapped_frame(0x1000, AllocFrameHint::KernelHeap) {
+                Some(ptr) => ptr.as_ptr(),
+                None => return ptr::null_mut(),
+            } as *mut HeapNodeHead;
 
-        // 填充新页元数据
-        unsafe {
-            (*new_page).index = index;
-            (*new_page).next = self.bucket[index];
-            (*new_page).free_ptr = ptr::null_mut();
-            (*new_page).free_count = (0x1000 / HEAP_SIZE_CLASSES[index] - 1) as u64;
-            let mut free_ptr =
-                (new_page as usize + 32.max(HEAP_SIZE_CLASSES[index])) as *mut NodeFreeBody;
-            while (free_ptr as usize) < (new_page as usize + 0x1000) {
-                (*free_ptr).next = (*new_page).free_ptr;
-                (*new_page).free_ptr = free_ptr;
-                free_ptr = (free_ptr as usize + HEAP_SIZE_CLASSES[index]) as *mut NodeFreeBody;
+            // 填充新页元数据
+            unsafe {
+                (*new_page).prev = ptr::null_mut();
+                (*new_page).next = self.bucket[index];
+                self.bucket[index] = new_page;
+
+                (*new_page).free_ptr = ptr::null_mut();
+                (*new_page).free_count = (0x1000 / HEAP_SIZE_CLASSES[index] - 1) as u64;
+                let mut free_ptr =
+                    (new_page as usize + 32.max(HEAP_SIZE_CLASSES[index])) as *mut NodeFreeBody;
+                while (free_ptr as usize) < (new_page as usize + 0x1000) {
+                    (*free_ptr).next = (*new_page).free_ptr;
+                    (*new_page).free_ptr = free_ptr;
+                    free_ptr = (free_ptr as usize + HEAP_SIZE_CLASSES[index]) as *mut NodeFreeBody;
+                }
             }
-            self.bucket[index] = new_page;
         }
 
         // 从链表中取出一个元素
         unsafe {
-            let ptr = (*new_page).free_ptr;
-            (*new_page).free_ptr = (*ptr).next;
-            (*new_page).free_count -= 1;
+            let page = self.bucket[index];
+            let ptr = (*page).free_ptr;
+            (*page).free_ptr = (*ptr).next;
+            (*page).free_count -= 1;
             // 如果分配完成后，当前块已经没有空余内存，则移出链表
-            if (*new_page).free_count == 0 {
-                self.bucket[index] = (*new_page).next;
+            if (*page).free_count == 0 {
+                self.bucket[index] = (*page).next;
+                if !self.bucket[index].is_null() {
+                    (*self.bucket[index]).prev = ptr::null_mut();
+                }
             }
             ptr as *mut u8
         }
@@ -131,6 +124,7 @@ impl KernelHeap {
 
         // 其余情况，对齐到4K，获取bucket元数据
         let head = (ptr as usize & !0xFFF) as *mut HeapNodeHead;
+        let index = Self::get_bucket_index_by_layout(layout);
 
         // 添加到free_list
         unsafe {
@@ -140,13 +134,30 @@ impl KernelHeap {
             (*head).free_count += 1;
             // 如果当前块首次释放，则加入链表
             if (*head).free_count == 1 {
-                let index = (*head).index;
+                if !self.bucket[index].is_null() {
+                    (*self.bucket[index]).prev = head;
+                }
                 (*head).next = self.bucket[index];
+                (*head).prev = ptr::null_mut();
                 self.bucket[index] = head;
             }
+            // 如果当前块全部释放，则返还page frame
+            let max_free_count = (0x1000 / HEAP_SIZE_CLASSES[index] - 1) as u64;
+            if (*head).free_count == max_free_count {
+                if (*head).prev.is_null() {
+                    self.bucket[index] = (*head).next;
+                    if !self.bucket[index].is_null() {
+                        (*(*head).next).prev = ptr::null_mut();
+                    }
+                } else {
+                    (*(*head).prev).next = (*head).next;
+                    if !(*head).next.is_null() {
+                        (*(*head).next).prev = (*head).prev;
+                    }
+                }
+                memory::physics::free_mapped_frame(head as usize, 0x1000);
+            }
         }
-
-        // TODO: 释放回page frame?
     }
 }
 
