@@ -19,10 +19,10 @@ struct KernelHeap {
 }
 
 struct HeapNodeHead {
-    page_size: usize,
+    index: usize,
     next: *mut HeapNodeHead,
     free_ptr: *mut NodeFreeBody,
-    _padding: usize,
+    free_count: u64,
 }
 
 const _: () = {
@@ -67,6 +67,13 @@ impl KernelHeap {
             if !node_head.free_ptr.is_null() {
                 let allocated_ptr = node_head.free_ptr as *mut u8;
                 node_head.free_ptr = unsafe { (*node_head.free_ptr).next };
+                node_head.free_count -= 1;
+                // 如果分配完成后，当前块已经没有空余内存，则移出链表
+                if node_head.free_count > 0 {
+                    self.bucket[index] = bucket;
+                } else {
+                    self.bucket[index] = node_head.next;
+                }
                 return allocated_ptr;
             }
             bucket = node_head.next;
@@ -80,9 +87,10 @@ impl KernelHeap {
 
         // 填充新页元数据
         unsafe {
-            (*new_page).page_size = HEAP_SIZE_CLASSES[index];
+            (*new_page).index = index;
             (*new_page).next = self.bucket[index];
             (*new_page).free_ptr = ptr::null_mut();
+            (*new_page).free_count = (0x1000 / HEAP_SIZE_CLASSES[index] - 1) as u64;
             let mut free_ptr =
                 (new_page as usize + 32.max(HEAP_SIZE_CLASSES[index])) as *mut NodeFreeBody;
             while (free_ptr as usize) < (new_page as usize + 0x1000) {
@@ -97,6 +105,11 @@ impl KernelHeap {
         unsafe {
             let ptr = (*new_page).free_ptr;
             (*new_page).free_ptr = (*ptr).next;
+            (*new_page).free_count -= 1;
+            // 如果分配完成后，当前块已经没有空余内存，则移出链表
+            if (*new_page).free_count == 0 {
+                self.bucket[index] = (*new_page).next;
+            }
             ptr as *mut u8
         }
     }
@@ -124,6 +137,13 @@ impl KernelHeap {
             let ptr = ptr as *mut NodeFreeBody;
             (*ptr).next = (*head).free_ptr;
             (*head).free_ptr = ptr;
+            (*head).free_count += 1;
+            // 如果当前块首次释放，则加入链表
+            if (*head).free_count == 1 {
+                let index = (*head).index;
+                (*head).next = self.bucket[index];
+                self.bucket[index] = head;
+            }
         }
 
         // TODO: 释放回page frame?
