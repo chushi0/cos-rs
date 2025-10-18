@@ -35,6 +35,11 @@ pub unsafe extern "C" fn kmain(
         memory::physics::init(slice::from_raw_parts(memory_region_ptr, memory_region_len));
     }
 
+    // 初始化内核线程
+    multitask::thread::create_kernel_thread();
+    // 初始化IDLE线程
+    multitask::thread::create_idle_thread();
+
     // 开中断
     unsafe {
         sti();
@@ -53,8 +58,6 @@ pub unsafe extern "C" fn kmain(
             kprintln!("time elapsed B");
         }
     });
-
-    multitask::thread::test_thread_switch();
 
     multitask::async_rt::run()
 }

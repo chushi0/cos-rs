@@ -120,7 +120,7 @@ impl WakerInner {
 }
 
 /// 执行异步运行时主函数
-/// 
+///
 /// 该函数将不断地获取异步任务并执行。当所有任务均执行完毕后，会执行 hlt 并等待中断
 pub fn run() -> ! {
     loop {
@@ -158,6 +158,7 @@ pub fn run() -> ! {
             }
         } else {
             // 没有任务了，hlt，等中断
+            // TODO: 在线程实现后，应当挂起当前线程并执行其他线程，waker负责唤醒内核线程
             unsafe {
                 asm!("hlt", options(nostack, preserves_flags));
             }
