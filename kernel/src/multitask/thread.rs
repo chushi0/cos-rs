@@ -159,7 +159,10 @@ pub fn create_kernel_thread() {
     let thread = Arc::new(SpinLock::new(thread));
 
     let _guard = unsafe { IrqGuard::cli() };
-    THREADS.lock().insert(thread_id, thread);
+    THREADS.lock().insert(thread_id, thread.clone());
+    unsafe {
+        CURRENT_THREAD = Some(thread);
+    }
 }
 
 /// 获取当前正在执行的线程
