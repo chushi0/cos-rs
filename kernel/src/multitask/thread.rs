@@ -23,9 +23,12 @@ static THREAD_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 // TODO: 多核CPU后，修改到per-cpu内存页
 static mut CURRENT_THREAD: Option<Arc<SpinLock<Thread>>> = None;
 
-// TODO: IDLE THREAD应当每个线程一个
+// TODO: IDLE THREAD应当每个CPU一个
 static mut IDLE_THREAD: Option<Arc<SpinLock<Thread>>> = None;
 static mut IDLE_THREAD_ID: u64 = 0;
+
+// TODO: KERNEL THREAD 也应该每个CPU一个，而且全局可访问
+static mut KERNEL_THREAD_ID: u64 = 0;
 
 pub struct Thread {
     // 线程ID
@@ -162,6 +165,31 @@ pub fn create_kernel_thread() {
     THREADS.lock().insert(thread_id, thread.clone());
     unsafe {
         CURRENT_THREAD = Some(thread);
+        KERNEL_THREAD_ID = thread_id;
+    }
+}
+
+pub fn wake_kernel_thread() {
+    wake_thread(unsafe { KERNEL_THREAD_ID });
+}
+
+pub fn wake_thread(thread_id: u64) {
+    let Some(thread) = ({
+        let _guard = unsafe { IrqGuard::cli() };
+        THREADS.lock().get(&thread_id).cloned()
+    }) else {
+        return;
+    };
+
+    let _guard = unsafe { IrqGuard::cli() };
+    let mut thread_lock = thread.lock();
+    let status = thread_lock.status;
+    if !matches!(status, ThreadStatus::Running) {
+        thread_lock.status = ThreadStatus::Ready;
+        drop(thread_lock);
+        if !matches!(status, ThreadStatus::Ready) {
+            READY_THREADS.lock().push_back(Arc::downgrade(&thread));
+        }
     }
 }
 

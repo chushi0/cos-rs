@@ -1,5 +1,4 @@
 use core::{
-    arch::asm,
     cell::UnsafeCell,
     marker::PhantomPinned,
     pin::Pin,
@@ -13,7 +12,10 @@ use alloc::{
     sync::{Arc, Weak},
 };
 
-use crate::sync::{IrqGuard, SpinLock};
+use crate::{
+    multitask::thread,
+    sync::{IrqGuard, SpinLock},
+};
 
 // 运行时结构
 static RUNTIME: SpinLock<Runtimer> = SpinLock::new(Runtimer::new());
@@ -92,6 +94,9 @@ impl WakerInner {
 
     unsafe fn wake_by_ref(waker: *const ()) {
         unsafe {
+            // 如果成功将任务加入队列，则为true
+            let mut push_back = false;
+
             // 转为正确的指针
             let waker = waker as *const WakerInner;
             // 尝试获取弱引用
@@ -106,7 +111,13 @@ impl WakerInner {
                 // 如果在等待队列中，则将其放入就绪队列
                 if let Some(task) = rt.suspend.remove(&(*task.get()).task_id) {
                     rt.ready.push_back(task);
+                    push_back = true;
                 }
+            }
+
+            // 如果已经放回了，将内核线程唤醒
+            if push_back {
+                thread::wake_kernel_thread();
             }
         }
     }
@@ -157,11 +168,8 @@ pub fn run() -> ! {
                 }
             }
         } else {
-            // 没有任务了，hlt，等中断
-            // TODO: 在线程实现后，应当挂起当前线程并执行其他线程，waker负责唤醒内核线程
-            unsafe {
-                asm!("hlt", options(nostack, preserves_flags));
-            }
+            // 没有任务了，挂起当前线程并执行其他线程
+            thread::thread_yield(true);
         }
     }
 }
