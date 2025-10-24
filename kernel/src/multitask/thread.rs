@@ -12,7 +12,12 @@ use alloc::{
     sync::{Arc, Weak},
 };
 
-use crate::sync::{IrqGuard, SpinLock};
+use crate::{
+    int,
+    memory::{self, physics::AllocFrameHint},
+    multitask,
+    sync::{IrqGuard, SpinLock},
+};
 
 static THREADS: SpinLock<BTreeMap<u64, Arc<SpinLock<Thread>>>> = SpinLock::new(BTreeMap::new());
 static READY_THREADS: SpinLock<VecDeque<Weak<SpinLock<Thread>>>> = SpinLock::new(VecDeque::new());
@@ -30,6 +35,10 @@ static mut IDLE_THREAD_ID: u64 = 0;
 // TODO: KERNEL THREAD 也应该每个CPU一个，而且全局可访问
 static mut KERNEL_THREAD_ID: u64 = 0;
 
+// RSP0栈大小（8K）
+const RSP0_PAGE_COUNT: usize = 2;
+const RSP0_SIZE: usize = 0x1000 * RSP0_PAGE_COUNT;
+
 pub struct Thread {
     // 线程ID
     pub thread_id: u64,
@@ -39,6 +48,20 @@ pub struct Thread {
     pub context: Context,
     // 线程状态
     pub status: ThreadStatus,
+    // rsp0 进入内核切换栈地址（低地址）
+    pub rsp0: Option<NonZeroU64>,
+}
+
+impl Drop for Thread {
+    fn drop(&mut self) {
+        if let Some(rsp0) = self.rsp0.take() {
+            multitask::async_rt::spawn(async move {
+                unsafe {
+                    memory::physics::free_mapped_frame(rsp0.get() as usize, RSP0_SIZE);
+                }
+            });
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -89,6 +112,12 @@ pub unsafe fn create_thread(
     let mut context = Context::uninit();
     context.rip = start_address;
     context.rsp = stack;
+    let rsp0 = if process_id.is_some() {
+        let addr = memory::physics::alloc_mapped_frame(RSP0_SIZE, AllocFrameHint::KernelHeap)?;
+        Some(addr.addr().try_into().expect("usize is u64"))
+    } else {
+        None
+    };
     let thread = Thread {
         thread_id,
         process_id,
@@ -98,6 +127,7 @@ pub unsafe fn create_thread(
         } else {
             ThreadStatus::Ready
         },
+        rsp0,
     };
     let thread = Arc::new(SpinLock::new(thread));
 
@@ -135,6 +165,7 @@ pub fn create_idle_thread() {
         process_id: None,
         context,
         status: ThreadStatus::Running,
+        rsp0: None,
     };
     let thread = Arc::new(SpinLock::new(thread));
 
@@ -158,6 +189,7 @@ pub fn create_kernel_thread() {
         process_id: None,
         context,
         status: ThreadStatus::Running,
+        rsp0: None,
     };
     let thread = Arc::new(SpinLock::new(thread));
 
@@ -295,9 +327,18 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
             if matches!(lock.status, ThreadStatus::Ready) {
                 lock.status = ThreadStatus::Running;
             }
+            // 切换栈
+            let rsp0 = lock.rsp0;
             drop(lock);
             // 设置当前线程
             CURRENT_THREAD = Some(thread);
+            // 设置切换栈
+            let addr = if let Some(rsp0) = rsp0 {
+                rsp0.get() + RSP0_SIZE as u64
+            } else {
+                0
+            };
+            int::tss::set_rsp0(addr);
             // 切换上下文
             switch_to_context(context);
         }
