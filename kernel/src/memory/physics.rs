@@ -1,12 +1,16 @@
 use core::{
     arch::asm,
     mem::MaybeUninit,
-    num::{NonZero, NonZeroUsize},
+    num::{NonZero, NonZeroU64, NonZeroUsize},
     ops::{Deref, DerefMut},
     ptr::{self, NonNull},
 };
 
-use crate::{bootloader::MemoryRegion, kprintln, sync::SpinLock};
+use crate::{
+    bootloader::MemoryRegion,
+    kprintln,
+    sync::{IrqGuard, SpinLock},
+};
 
 /// 系统可用的内存范围
 static mut MEMORY_REGION: &[MemoryRegion] = &[];
@@ -157,6 +161,28 @@ pub unsafe fn write_memory<T: Sized>(address: usize, src: &T) {
 
         dst_start += len;
         src_start += len;
+    }
+}
+
+/// 清空物理内存
+///
+/// 此函数会在页表中添加一个临时项，以允许访问指定物理内存。
+///
+/// Safety:
+/// 该物理内存必须存在。对内存的访问不能违反Rust规则。
+pub unsafe fn zero_memory(address: usize, size: usize) {
+    let mut dst_start = address;
+    let dst_end = address + size;
+    while dst_start < dst_end {
+        let (start, len) = insert_temp_page_table(dst_start);
+        let len = len.min(dst_end - dst_start);
+
+        // Safety: 我们已将物理地址加入页表，并映射为虚拟地址
+        unsafe {
+            ptr::write_bytes(start as *mut u8, 0, len);
+        }
+
+        dst_start += len;
     }
 }
 
@@ -609,6 +635,38 @@ unsafe fn remove_kernel_memory_page(virtual_memory: usize) {
             in(reg) virtual_memory,
             options(nostack, preserves_flags)
         )
+    }
+}
+
+/// 申请用户态程序页表，并返回对应物理地址
+///
+/// [0]和[511]均与内核一致，避免内核使用内存时需要切换页表
+///
+/// 注意：返回的是物理地址，不是虚拟地址。这个地址是未映射的
+pub fn alloc_user_page_table() -> Option<NonZeroU64> {
+    let addr = {
+        let _guard = unsafe { IrqGuard::cli() };
+        FRAME_ALLOCATOR.lock().alloc_frame()?
+    };
+
+    unsafe {
+        zero_memory(addr.get(), 4096);
+        write_memory(addr.get(), &(*PML4.unwrap()).0[0]);
+        write_memory(addr.get() + 511 * 8, &(*PML4.unwrap()).0[511]);
+    }
+
+    Some(addr.try_into().unwrap())
+}
+
+/// 释放用户态页表
+pub unsafe fn release_user_page_table(addr: NonZeroU64) {
+    let _guard = unsafe { IrqGuard::cli() };
+    // 由于页表并未映射，我们仅需要将此内存归还物理页分配器
+    // TODO: 递归检查内部页表，确保已释放所有内存！
+    unsafe {
+        FRAME_ALLOCATOR
+            .lock()
+            .delloc_frame(addr.try_into().unwrap());
     }
 }
 

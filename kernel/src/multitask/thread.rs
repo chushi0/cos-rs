@@ -39,6 +39,7 @@ static mut KERNEL_THREAD_ID: u64 = 0;
 const RSP0_PAGE_COUNT: usize = 2;
 const RSP0_SIZE: usize = 0x1000 * RSP0_PAGE_COUNT;
 
+// 内核线程或用户线程
 pub struct Thread {
     // 线程ID
     pub thread_id: u64,
