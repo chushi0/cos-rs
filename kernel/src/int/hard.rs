@@ -5,7 +5,7 @@ use core::{
 };
 
 use crate::{
-    int::{Idt, StackFrame},
+    int::idt::{Idt, StackFrame},
     interrupt_handler, kprintln, multitask,
 };
 

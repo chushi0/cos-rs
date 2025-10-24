@@ -18,12 +18,14 @@ struct DescriptorTablePointer {
     base: u64,
 }
 
-static mut GDT: [GdtEntry; 5] = [
+static mut GDT: [GdtEntry; 7] = [
     GdtEntry::null(),
     GdtEntry::null(),
     GdtEntry::null(),
     GdtEntry::code(),
     GdtEntry::data(),
+    GdtEntry::null(),
+    GdtEntry::null(),
 ];
 static mut GDTR: DescriptorTablePointer = DescriptorTablePointer::uninit();
 
