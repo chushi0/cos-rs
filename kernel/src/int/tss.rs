@@ -27,7 +27,7 @@ const _: () = {
 
 static mut MAIN_CPU_TSS: TaskStateSegment = TaskStateSegment::null();
 
-pub unsafe fn init() {
+pub(super) unsafe fn init() {
     unsafe {
         // 设置iopb
         MAIN_CPU_TSS.iopb = size_of::<TaskStateSegment>() as u16;

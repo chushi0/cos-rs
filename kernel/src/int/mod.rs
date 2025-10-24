@@ -1,6 +1,6 @@
 #[allow(unused)]
 mod hard;
-mod idt;
+pub mod idt;
 mod soft;
 pub mod tss;
 

@@ -7,7 +7,7 @@ use crate::int::{hard, soft};
 
 /// 中断描述符表
 #[repr(transparent)]
-pub struct Idt([IDTEntry; 256]);
+pub(super) struct Idt([IDTEntry; 256]);
 
 /// 中断描述符表寄存器
 #[repr(C, packed)]
@@ -19,7 +19,7 @@ struct Idtr<'idt> {
 /// 中断描述符表中的每一项
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub struct IDTEntry {
+pub(super) struct IDTEntry {
     function_pointer_lower: u16,
     gdt_selector: u16,
     // 从低到高
@@ -72,7 +72,7 @@ pub struct StackFrame {
 #[derive(Debug)]
 #[repr(C)]
 #[allow(unused)]
-pub struct StackFrameWithErrorCode {
+pub(super) struct StackFrameWithErrorCode {
     r15: u64,
     r14: u64,
     r13: u64,
@@ -102,7 +102,7 @@ static mut MAIN_CPU_IDT: Idt = Idt::new();
 /// 初始化IDT
 ///
 /// Safety: 仅在第一次调用时，该函数是安全的。不能并发
-pub unsafe fn init() {
+pub(super) unsafe fn init() {
     // Safety: 由调用者保证无并发
     unsafe {
         MAIN_CPU_IDT[Idt::INDEX_DIVIDE_ERROR].set_function_pointer(soft::divide_by_zero);
@@ -334,7 +334,7 @@ impl Idt {
     ///
     /// # Source
     /// External interrupts
-    pub const INDEX_USER_DEFINED: usize = 0x20;
+    pub(super) const INDEX_USER_DEFINED: usize = 0x20;
 
     /// 创建新的空白中断描述符表
     const fn new() -> Self {
@@ -369,6 +369,51 @@ impl Deref for Idt {
 impl DerefMut for Idt {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+/// 构造中断栈帧并进行中断返回，进入用户态
+///
+/// 执行后，CPU控制权将交给 rip，并将当前栈指针切换到 rsp，
+/// 此函数用于主动进入用户态，执行用户态代码。
+/// 在内核视角，此函数不会返回。
+pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
+    unsafe {
+        asm!(
+            // 构造栈帧并返回
+            "push 0x43", // ss
+            "push {stack}", // rsp
+            "pushfq", // rflags
+            "push 0x38", // cs
+            "push {entry}", // rip
+            // 加载数据段
+            "mov ax, 0x40",
+            "mov ds, ax",
+            "mov es, ax",
+            "mov fs, ax",
+            "mov gs, ax",
+            // 清空寄存器以防泄露信息
+            "xor rax, rax",
+            "xor rbx, rbx",
+            "xor rcx, rcx",
+            "xor rdx, rdx",
+            "xor rsi, rsi",
+            "xor rdi, rdi",
+            "xor rbp, rbp",
+            "xor r8, r8",
+            "xor r9, r9",
+            "xor r10, r10",
+            "xor r11, r11",
+            "xor r12, r12",
+            "xor r13, r13",
+            "xor r14, r14",
+            "xor r15, r15",
+            // 中断返回
+            "iretq",
+            entry = in(reg) rip,
+            stack = in(reg) rsp,
+            options(noreturn),
+        )
     }
 }
 

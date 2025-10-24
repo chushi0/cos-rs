@@ -18,14 +18,16 @@ struct DescriptorTablePointer {
     base: u64,
 }
 
-static mut GDT: [GdtEntry; 7] = [
-    GdtEntry::null(),
-    GdtEntry::null(),
-    GdtEntry::null(),
-    GdtEntry::code(),
-    GdtEntry::data(),
-    GdtEntry::null(),
-    GdtEntry::null(),
+static mut GDT: [GdtEntry; 9] = [
+    GdtEntry::null(),  // 0x00
+    GdtEntry::null(),  // 0x08
+    GdtEntry::null(),  // 0x10
+    GdtEntry::code(),  // 0x18
+    GdtEntry::data(),  // 0x20
+    GdtEntry::null(),  // 0x28
+    GdtEntry::null(),  // 0x30
+    GdtEntry::ucode(), // 0x38
+    GdtEntry::udata(), // 0x40
 ];
 static mut GDTR: DescriptorTablePointer = DescriptorTablePointer::uninit();
 
@@ -307,6 +309,14 @@ impl GdtEntry {
 
     const fn data() -> Self {
         Self(0x00CF_9200_0000_0000)
+    }
+
+    const fn ucode() -> Self {
+        Self(0x00AF_FA00_0000_0000)
+    }
+
+    const fn udata() -> Self {
+        Self(0x00CF_F200_0000_0000)
     }
 }
 
