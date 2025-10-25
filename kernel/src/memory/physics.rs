@@ -416,7 +416,7 @@ pub unsafe fn free_mapped_frame(address: usize, size: usize) {
 /// 判断指定内存页是否空闲
 unsafe fn is_page_free(virtual_memory: NonZeroUsize, pml4: *const PageTable) -> bool {
     // 计算虚拟地址所在的各级页表项
-    let pml4_index = (virtual_memory.get() >> 38) & 0x1ff;
+    let pml4_index = (virtual_memory.get() >> 39) & 0x1ff;
     let pdpt_index = (virtual_memory.get() >> 30) & 0x1ff;
     let pd_index = (virtual_memory.get() >> 21) & 0x1ff;
     let pt_index = (virtual_memory.get() >> 12) & 0x1ff;
@@ -434,43 +434,43 @@ unsafe fn is_page_free(virtual_memory: NonZeroUsize, pml4: *const PageTable) -> 
     };
 
     if !pml4_entry.present() {
-        return false;
+        return true;
     }
 
     unsafe {
         read_memory(
-            pml4_entry.address() as usize + pdpt_index * size_of::<PageTable>(),
+            pml4_entry.address() as usize + pdpt_index * size_of::<PageEntry>(),
             &mut pdpt_entry,
         );
     }
 
-    if pdpt_entry.present() {
-        return false;
+    if !pdpt_entry.present() {
+        return true;
     }
 
     unsafe {
         read_memory(
-            pdpt_entry.address() as usize + pd_index * size_of::<PageTable>(),
+            pdpt_entry.address() as usize + pd_index * size_of::<PageEntry>(),
             &mut pd_entry,
         );
     }
 
-    if pd_entry.present() {
-        return false;
+    if !pd_entry.present() {
+        return true;
     }
 
     unsafe {
         read_memory(
-            pd_entry.address() as usize + pt_index * size_of::<PageTable>(),
+            pd_entry.address() as usize + pt_index * size_of::<PageEntry>(),
             &mut pt_entry,
         );
     }
 
-    if pt_entry.present() {
-        return false;
+    if !pt_entry.present() {
+        return true;
     }
 
-    true // 可用
+    false
 }
 
 /// 寻找一个连续的、可用的内核虚拟内存位置
@@ -592,7 +592,7 @@ fn write_memory_page(
     }
 
     // 计算当前虚拟内存地址在各级页表的位置
-    let pml4_index = (virtual_memory >> 38) & 0x1FF;
+    let pml4_index = (virtual_memory >> 39) & 0x1FF;
     let pdpt_index = (virtual_memory >> 30) & 0x1FF;
     let pd_index = (virtual_memory >> 21) & 0x1FF;
     let pt_index = (virtual_memory >> 12) & 0x1FF;
@@ -655,38 +655,29 @@ fn write_memory_page(
     if writable {
         pt_entry.0 |= PageEntry::P_RW;
     }
-    if executable {
-        pt_entry.0 |= PageEntry::P_PS;
+    if !executable {
+        pt_entry.0 |= PageEntry::P_NX;
     }
 
     // 更新各级页表
     unsafe {
         write_memory(pt_address + pt_index * size_of::<PageEntry>(), &pt_entry);
         if let Some(pt_alloc_physics) = pt_alloc_physics {
-            pd_entry.0 = pt_alloc_physics.get() as u64
-                | PageEntry::P_PRESENT
-                | PageEntry::P_RW
-                | PageEntry::P_PS;
+            pd_entry.0 = pt_alloc_physics.get() as u64 | PageEntry::P_PRESENT | PageEntry::P_RW;
             write_memory(pd_address + pd_index * size_of::<PageEntry>(), &pd_entry);
         }
         if let Some(pd_alloc_physics) = pd_alloc_physics {
-            pdpt_entry.0 = pd_alloc_physics.get() as u64
-                | PageEntry::P_PRESENT
-                | PageEntry::P_RW
-                | PageEntry::P_PS;
+            pdpt_entry.0 = pd_alloc_physics.get() as u64 | PageEntry::P_PRESENT | PageEntry::P_RW;
             write_memory(
                 pdpt_address + pdpt_index * size_of::<PageEntry>(),
-                &pd_entry,
+                &pdpt_entry,
             );
         }
         if let Some(pdpt_alloc_physics) = pdpt_alloc_physics {
-            pml4_entry.0 = pdpt_alloc_physics.get() as u64
-                | PageEntry::P_PRESENT
-                | PageEntry::P_RW
-                | PageEntry::P_PS;
+            pml4_entry.0 = pdpt_alloc_physics.get() as u64 | PageEntry::P_PRESENT | PageEntry::P_RW;
             write_memory(
                 pml4 as usize + pml4_index * size_of::<PageEntry>(),
-                &pdpt_entry,
+                &pml4_entry,
             );
         }
     }
@@ -837,6 +828,7 @@ impl PageEntry {
     const P_PRESENT: u64 = 1 << 0;
     const P_RW: u64 = 1 << 1;
     const P_PS: u64 = 1 << 7;
+    const P_NX: u64 = 1 << 62;
 
     fn address(&self) -> u64 {
         self.0 & 0x000F_FFFF_FFFF_F000
