@@ -393,6 +393,7 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
             "call {deal_old_thread}",
             // 进行线程切换，当前线程上下文已经写入
             "mov rdi, [rbp+64]",
+            "sub rsp, 8",
             "jmp {deal_new_thread}",
             deal_old_thread = sym deal_old_thread,
             deal_new_thread = sym deal_new_thread,

@@ -52,7 +52,7 @@ pub unsafe extern "C" fn kmain(
         multitask::thread::create_thread(
             None,
             busy_loop as usize as u64,
-            Box::leak(Box::new([0u8; 4096])) as *const u8 as usize as u64,
+            Box::leak(Box::new([0u8; 4096])) as *const u8 as usize as u64 + 4096 - 8,
             false,
         );
     }
