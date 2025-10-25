@@ -6,11 +6,20 @@
 extern crate alloc;
 extern crate rlibc;
 
-use core::{arch::asm, slice, time::Duration};
+use core::{
+    arch::{asm, naked_asm},
+    num::NonZeroU64,
+    slice,
+    time::Duration,
+};
 
 use alloc::boxed::Box;
 
-use crate::{bootloader::MemoryRegion, sync::sti};
+use crate::{
+    bootloader::MemoryRegion,
+    multitask::process::ProcessPageType,
+    sync::{IrqGuard, sti},
+};
 
 pub mod bootloader;
 pub mod display;
@@ -68,6 +77,82 @@ pub unsafe extern "C" fn kmain(
         loop {
             multitask::async_task::sleep(Duration::from_secs(3)).await;
             kprintln!("time elapsed B");
+        }
+    });
+    multitask::async_rt::spawn(async {
+        // 模拟一个用户线程
+        let Some(process) = multitask::process::create_process() else {
+            kprintln!("create process failed");
+            return;
+        };
+        let process_id = {
+            let _guard = unsafe { IrqGuard::cli() };
+            process.lock().process_id
+        };
+
+        // 创建页表
+        let Some(code_page) =
+            multitask::process::create_process_page(process_id, 0x1000, ProcessPageType::Code)
+        else {
+            kprintln!("create process code page failed");
+            return;
+        };
+        kprintln!("code page: {code_page:x}");
+
+        let Some(stack_page) =
+            multitask::process::create_process_page(process_id, 0x1000, ProcessPageType::Stack)
+        else {
+            kprintln!("create process stack page failed");
+            return;
+        };
+        kprintln!("stack page: {stack_page:x}");
+
+        unsafe {
+            // 写入代码
+            // 0x90 nop
+            // 0xcc int 3
+            // 0xf4 hlt 特权指令，会立即触发#GP
+            // 0xeb 0xfe jmp $-2 会卡在这里
+            let code: [u8; _] = [0x90, 0xcc, /*0xf4,*/ 0xeb, 0xfe];
+            if multitask::process::write_user_process_memory(process_id, code_page.get(), &code)
+                .is_err()
+            {
+                kprintln!("write 0xcc code failed");
+                return;
+            }
+
+            // 写入启动地址
+            if multitask::process::write_user_process_memory(
+                process_id,
+                stack_page.get() + 0x1000 - 8,
+                &code_page,
+            )
+            .is_err()
+            {
+                kprintln!("write &code_page stack failed");
+                return;
+            }
+
+            // 创建线程
+            multitask::thread::create_thread(
+                NonZeroU64::new(process_id),
+                user_thread_entry as u64,
+                stack_page.get() + 0x1000 - 8,
+                false,
+            );
+        }
+
+        #[unsafe(naked)]
+        extern "C" fn user_thread_entry() -> ! {
+            extern "C" fn enter_user_mode(rip: u64, rsp: u64) -> ! {
+                unsafe { int::idt::enter_user_mode(rip, rsp) }
+            }
+            naked_asm!(
+                "mov rdi, [rsp]",
+                "mov rsi, rsp",
+                "jmp {enter_user_mode}",
+                enter_user_mode = sym enter_user_mode,
+            )
         }
     });
 

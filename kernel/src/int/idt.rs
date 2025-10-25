@@ -108,6 +108,7 @@ pub(super) unsafe fn init() {
         MAIN_CPU_IDT[Idt::INDEX_DIVIDE_ERROR].set_function_pointer(soft::divide_by_zero);
         MAIN_CPU_IDT[Idt::INDEX_DIVIDE_ERROR].enable();
         MAIN_CPU_IDT[Idt::INDEX_BREAKPOINT].set_function_pointer(soft::breakpoint);
+        MAIN_CPU_IDT[Idt::INDEX_BREAKPOINT].enable_user_trigger();
         MAIN_CPU_IDT[Idt::INDEX_BREAKPOINT].enable();
         MAIN_CPU_IDT[Idt::INDEX_INVALID_OPCODE].set_function_pointer(soft::invalid_opcode);
         MAIN_CPU_IDT[Idt::INDEX_INVALID_OPCODE].enable();
@@ -181,6 +182,10 @@ impl IDTEntry {
     fn set_stack_index(&mut self, index: u8) {
         assert!(index < 8);
         self.options = (self.options & 0xFFF8) | (index as u16);
+    }
+
+    fn enable_user_trigger(&mut self) {
+        self.options |= 0x6000;
     }
 }
 
