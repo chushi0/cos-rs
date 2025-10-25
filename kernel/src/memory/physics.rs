@@ -172,6 +172,10 @@ pub unsafe fn zero_memory(address: usize, size: usize) {
     }
 }
 
+pub fn kernel_pml4() -> u64 {
+    return unsafe { PML4.unwrap() as usize as u64 };
+}
+
 /// 将地址插入到临时页表中，返回对应的虚拟地址及最大长度
 fn insert_temp_page_table(address: usize) -> (usize, usize) {
     // 对齐内存

@@ -44,3 +44,9 @@ pub fn create_process() -> Option<Arc<SpinLock<Process>>> {
 
     Some(process)
 }
+
+/// 根据id获取进程
+pub fn get_process(id: u64) -> Option<Arc<SpinLock<Process>>> {
+    let _guard = unsafe { IrqGuard::cli() };
+    PROCESSES.lock().get(&id).cloned()
+}

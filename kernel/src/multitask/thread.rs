@@ -335,6 +335,8 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
             }
             // 切换栈
             let rsp0 = lock.rsp0;
+            // 所属进程
+            let process_id = lock.process_id;
             drop(lock);
             // 设置当前线程
             CURRENT_THREAD = Some(thread);
@@ -345,6 +347,19 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
                 0
             };
             int::tss::set_rsp0(addr);
+            // 设置页表
+            let pml4 = if let Some(process_id) = process_id
+                && let Some(process) = multitask::process::get_process(process_id.get())
+            {
+                process.lock().page_table.get()
+            } else {
+                memory::physics::kernel_pml4()
+            };
+            asm!(
+                "mov cr3, {}",
+                in(reg) pml4,
+                options(nostack, preserves_flags)
+            );
             // 切换上下文
             switch_to_context(context);
         }
