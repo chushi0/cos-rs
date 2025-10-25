@@ -14,7 +14,7 @@ use alloc::{
 
 use crate::{
     multitask::thread,
-    sync::{IrqGuard, SpinLock},
+    sync::{IrqGuard, SpinLock, sti},
 };
 
 // 运行时结构
@@ -134,6 +134,10 @@ impl WakerInner {
 ///
 /// 该函数将不断地获取异步任务并执行。当所有任务均执行完毕后，会执行 hlt 并等待中断
 pub fn run() -> ! {
+    // 开中断，异步任务需要中断驱动
+    unsafe {
+        sti();
+    }
     loop {
         // 获取一个任务
         let task = {

@@ -8,7 +8,6 @@ use core::{
 
 use crate::{
     bootloader::MemoryRegion,
-    kprintln,
     sync::{IrqGuard, SpinLock},
 };
 
@@ -93,19 +92,6 @@ pub unsafe fn init(memory_region: &'static [MemoryRegion]) {
         KERNEL_PD = Some(kernel_pd);
         KERNEL_PT = kernel_pt;
     };
-
-    kprintln!(
-        "memory ptr: {:?}, len: {}",
-        memory_region.as_ptr(),
-        memory_region.len()
-    );
-    for memory_region in memory_region {
-        kprintln!(
-            "memory: 0x{:x} - 0x{:x}",
-            unsafe { ptr::read_unaligned(&raw const memory_region.base_addr) },
-            memory_region.base_addr + memory_region.length
-        );
-    }
 
     // 初始化页帧分配器
     unsafe {
@@ -322,6 +308,12 @@ pub enum AllocFrameHint {
     /// 内核堆内存，优先使用高地址空间 0xFFFF_FF80_0000_0000 ~ 0xFFFF_FFFF_BFFF_FFFF
     /// 即使用KERNEL_PDPT[0] ~ KERNEL_PDPT[510]部分
     KernelHeap,
+    /// 用户代码段
+    UserCode(u64),
+    /// 用户栈
+    UserStack(u64),
+    /// 用户堆或运行时动态申请
+    UserHeap(u64),
 }
 
 /// 申请页帧，并映射到虚拟地址空间
@@ -339,6 +331,9 @@ pub fn alloc_mapped_frame(size: usize, hint: AllocFrameHint) -> Option<NonNull<u
     // 寻找可用的连续虚拟内存
     let virtual_memory_start = match hint {
         AllocFrameHint::KernelHeap => find_kernel_free_virtual_memory(frame_count)?,
+        AllocFrameHint::UserCode(pml4) => find_user_free_virtual_memory(frame_count, pml4)?,
+        AllocFrameHint::UserStack(pml4) => find_user_free_virtual_memory(frame_count, pml4)?,
+        AllocFrameHint::UserHeap(pml4) => find_user_free_virtual_memory(frame_count, pml4)?,
     };
 
     for i in 0..frame_count {
@@ -356,6 +351,27 @@ pub fn alloc_mapped_frame(size: usize, hint: AllocFrameHint) -> Option<NonNull<u
             AllocFrameHint::KernelHeap => write_kernel_memory_page(
                 virtual_memory_start.get() + i * 0x1000,
                 physics_memory.get(),
+            ),
+            AllocFrameHint::UserCode(pml4) => write_user_memory_page(
+                virtual_memory_start.get() + i * 0x1000,
+                physics_memory.get(),
+                pml4,
+                false,
+                true,
+            ),
+            AllocFrameHint::UserStack(pml4) => write_user_memory_page(
+                virtual_memory_start.get() + i * 0x1000,
+                physics_memory.get(),
+                pml4,
+                true,
+                false,
+            ),
+            AllocFrameHint::UserHeap(pml4) => write_user_memory_page(
+                virtual_memory_start.get() + i * 0x1000,
+                physics_memory.get(),
+                pml4,
+                true,
+                false,
             ),
         };
 
@@ -393,6 +409,66 @@ pub unsafe fn free_mapped_frame(address: usize, size: usize) {
     }
 }
 
+/// 判断指定内存页是否空闲
+unsafe fn is_page_free(virtual_memory: NonZeroUsize, pml4: *const PageTable) -> bool {
+    // 计算虚拟地址所在的各级页表项
+    let pml4_index = (virtual_memory.get() >> 38) & 0x1ff;
+    let pdpt_index = (virtual_memory.get() >> 30) & 0x1ff;
+    let pd_index = (virtual_memory.get() >> 21) & 0x1ff;
+    let pt_index = (virtual_memory.get() >> 12) & 0x1ff;
+
+    let mut pml4_entry = PageEntry(0);
+    let mut pdpt_entry = PageEntry(0);
+    let mut pd_entry = PageEntry(0);
+    let mut pt_entry = PageEntry(0);
+
+    unsafe {
+        read_memory(
+            pml4 as usize + pml4_index * size_of::<PageEntry>(),
+            &mut pml4_entry,
+        );
+    };
+
+    if !pml4_entry.present() {
+        return false;
+    }
+
+    unsafe {
+        read_memory(
+            pml4_entry.address() as usize + pdpt_index * size_of::<PageTable>(),
+            &mut pdpt_entry,
+        );
+    }
+
+    if pdpt_entry.present() {
+        return false;
+    }
+
+    unsafe {
+        read_memory(
+            pdpt_entry.address() as usize + pd_index * size_of::<PageTable>(),
+            &mut pd_entry,
+        );
+    }
+
+    if pd_entry.present() {
+        return false;
+    }
+
+    unsafe {
+        read_memory(
+            pd_entry.address() as usize + pt_index * size_of::<PageTable>(),
+            &mut pt_entry,
+        );
+    }
+
+    if pt_entry.present() {
+        return false;
+    }
+
+    true // 可用
+}
+
 /// 寻找一个连续的、可用的内核虚拟内存位置
 ///
 /// block: 需要的4K页数量
@@ -401,67 +477,48 @@ pub unsafe fn free_mapped_frame(address: usize, size: usize) {
 fn find_kernel_free_virtual_memory(block: usize) -> Option<NonZeroUsize> {
     // 内核堆起始地址
     const KERNEL_SEARCH_START: usize = 0xFFFF_FF80_0000_0000;
+    // 内核堆结束地址
+    const KERNEL_SEARCH_END: usize = 0xFFFF_FFFF_C000_0000;
+    let pml4 = unsafe { PML4.unwrap() };
 
-    let mut start = KERNEL_SEARCH_START;
+    find_free_virtual_memory(KERNEL_SEARCH_START, KERNEL_SEARCH_END, pml4, block)
+}
+
+fn find_user_free_virtual_memory(block: usize, pml4: u64) -> Option<NonZeroUsize> {
+    // 用户起始地址
+    const USER_SEARCH_START: usize = 0x0000_0000_4000_0000;
+    // 用户结束地址
+    const USER_SEARCH_END: usize = 0xFFFF_FF80_0000_0000;
+
+    find_free_virtual_memory(
+        USER_SEARCH_START,
+        USER_SEARCH_END,
+        pml4 as usize as *const PageTable,
+        block,
+    )
+}
+
+fn find_free_virtual_memory(
+    search_start: usize,
+    search_end: usize,
+    pml4: *const PageTable,
+    block: usize,
+) -> Option<NonZeroUsize> {
+    let mut start = search_start;
+    let mut i = search_start;
     let mut remain = block;
 
-    // 先找到KERNEL_PDPT的页表
-    let kernel_pdpt = unsafe { &*KERNEL_PDPT? };
-    for pdpt_index in 0..511 {
-        // 如果当前entry为无效，则整个1G空间都是可用的
-        if !kernel_pdpt[pdpt_index].present() {
-            if remain <= 512 * 512 {
+    while i < search_end {
+        let page_free = unsafe { is_page_free(NonZeroUsize::new_unchecked(i), pml4) };
+        i += 0x1000;
+        if page_free {
+            remain -= 1;
+            if remain == 0 {
                 return NonZeroUsize::new(start);
             }
-            remain -= 512 * 512;
-            continue;
-        }
-
-        // 获取PD
-        let pd = unsafe {
-            let mut pd = MaybeUninit::<PageTable>::uninit();
-            read_memory(kernel_pdpt[pdpt_index].address() as usize, &mut pd);
-            pd.assume_init()
-        };
-
-        // 查看PD
-        for pd_index in 0..pd.len() {
-            // 如果当前entry无效，则整个2M空间都是可用的
-            if !pd[pd_index].present() {
-                if remain <= 512 {
-                    return NonZeroUsize::new(start);
-                }
-                remain -= 512;
-                continue;
-            }
-
-            // 获取PT
-            let pt = unsafe {
-                let mut pt = MaybeUninit::<PageTable>::uninit();
-                read_memory(pd[pd_index].address() as usize, &mut pt);
-                pt.assume_init()
-            };
-
-            // 查看PT
-            for pt_index in 0..pt.len() {
-                // 如果当前entry无效，则4K空间是可用的
-                if !pt[pt_index].present() {
-                    if remain <= 1 {
-                        return NonZeroUsize::new(start);
-                    }
-                    remain -= 1;
-                    continue;
-                }
-
-                // 连续空间中断，重新统计
-                // start为下一个虚拟内存页的地址
-                remain = block;
-                start = KERNEL_SEARCH_START
-                    + (pdpt_index << 30)
-                    + (pd_index << 21)
-                    + (pt_index << 12)
-                    + 0x1000;
-            }
+        } else {
+            start = i;
+            remain = block;
         }
     }
 
@@ -485,6 +542,33 @@ fn write_kernel_memory_page(
     virtual_memory: usize,
     physics_memory: usize,
 ) -> Result<(), WritePageError> {
+    let pml4 = unsafe { PML4.unwrap() };
+    write_memory_page(virtual_memory, physics_memory, pml4, true, false)
+}
+
+fn write_user_memory_page(
+    virtual_memory: usize,
+    physics_memory: usize,
+    pml4: u64,
+    writable: bool,
+    executable: bool,
+) -> Result<(), WritePageError> {
+    write_memory_page(
+        virtual_memory,
+        physics_memory,
+        pml4 as usize as *const PageTable,
+        writable,
+        executable,
+    )
+}
+
+fn write_memory_page(
+    virtual_memory: usize,
+    physics_memory: usize,
+    pml4: *const PageTable,
+    writable: bool,
+    executable: bool,
+) -> Result<(), WritePageError> {
     /// 获取下一级页表，或者分配一个新的页表
     /// 如果分配新的页表，新页表对应内存会被清空，但不会将页表项写入当前页表
     ///
@@ -497,24 +581,48 @@ fn write_kernel_memory_page(
         } else {
             let physics = FRAME_ALLOCATOR.lock().alloc_frame()?;
             unsafe {
-                write_memory(physics.get(), &PageTable::uninit());
+                zero_memory(physics.get(), size_of::<PageTable>());
             }
             Some((physics.get(), Some(physics)))
         }
     }
 
     // 计算当前虚拟内存地址在各级页表的位置
+    let pml4_index = (virtual_memory >> 38) & 0x1FF;
     let pdpt_index = (virtual_memory >> 30) & 0x1FF;
     let pd_index = (virtual_memory >> 21) & 0x1FF;
     let pt_index = (virtual_memory >> 12) & 0x1FF;
 
+    // 4级页表
+    let mut pml4_entry = PageEntry(0);
+    unsafe {
+        read_memory(
+            pml4 as usize + pml4_index * size_of::<PageEntry>(),
+            &mut pml4_entry,
+        );
+    }
+
     // 3级页表
-    let kernel_pdpt = unsafe { KERNEL_PDPT.ok_or(WritePageError)? as *mut PageTable };
-    let pdpt_entry = unsafe { &mut (&mut *kernel_pdpt)[pdpt_index] };
+    // 如果获取下一级页表失败，可以立即返回，因为此时没有申请其他内存
+    let (pdpt_address, pdpt_alloc_physics) = get_or_alloc(&pml4_entry).ok_or(WritePageError)?;
+    let mut pdpt_entry = PageEntry(0);
+    unsafe {
+        read_memory(
+            pdpt_address + pdpt_index * size_of::<PageEntry>(),
+            &mut pdpt_entry,
+        );
+    }
 
     // 2级页表
-    // 如果获取下一级页表失败，可以立即返回，因为此时没有申请其他内存
-    let (pd_address, pd_alloc_physics) = get_or_alloc(pdpt_entry).ok_or(WritePageError)?;
+    // 如果获取下一级页表失败，必须先将pdpt_alloc_physics的物理内存释放
+    let Some((pd_address, pd_alloc_physics)) = get_or_alloc(&pdpt_entry) else {
+        if let Some(pdpt_alloc_physics) = pdpt_alloc_physics {
+            unsafe {
+                FRAME_ALLOCATOR.lock().delloc_frame(pdpt_alloc_physics);
+            }
+        }
+        return Err(WritePageError);
+    };
     let mut pd_entry = unsafe {
         let mut pd_entry = MaybeUninit::<PageEntry>::uninit();
         read_memory(
@@ -525,8 +633,13 @@ fn write_kernel_memory_page(
     };
 
     // 1级页表
-    // 如果获取下一级页表失败，必须先将pd_alloc_physics的物理内存释放
+    // 如果获取下一级页表失败，必须先将pdpt_alloc_physics和pd_alloc_physics的物理内存释放
     let Some((pt_address, pt_alloc_physics)) = get_or_alloc(&pd_entry) else {
+        if let Some(pdpt_alloc_physics) = pdpt_alloc_physics {
+            unsafe {
+                FRAME_ALLOCATOR.lock().delloc_frame(pdpt_alloc_physics);
+            }
+        }
         if let Some(pt_alloc_physics) = pd_alloc_physics {
             unsafe {
                 FRAME_ALLOCATOR.lock().delloc_frame(pt_alloc_physics);
@@ -534,18 +647,43 @@ fn write_kernel_memory_page(
         }
         return Err(WritePageError);
     };
-    let pt_entry = PageEntry(physics_memory as u64 | PageEntry::P_PRESENT | PageEntry::P_RW);
+    let mut pt_entry = PageEntry(physics_memory as u64 | PageEntry::P_PRESENT);
+    if writable {
+        pt_entry.0 |= PageEntry::P_RW;
+    }
+    if executable {
+        pt_entry.0 |= PageEntry::P_PS;
+    }
 
     // 更新各级页表
     unsafe {
         write_memory(pt_address + pt_index * size_of::<PageEntry>(), &pt_entry);
         if let Some(pt_alloc_physics) = pt_alloc_physics {
-            pd_entry.0 = pt_alloc_physics.get() as u64 | PageEntry::P_PRESENT | PageEntry::P_RW;
+            pd_entry.0 = pt_alloc_physics.get() as u64
+                | PageEntry::P_PRESENT
+                | PageEntry::P_RW
+                | PageEntry::P_PS;
             write_memory(pd_address + pd_index * size_of::<PageEntry>(), &pd_entry);
         }
         if let Some(pd_alloc_physics) = pd_alloc_physics {
-            (&mut *kernel_pdpt)[pdpt_index] =
-                PageEntry(pd_alloc_physics.get() as u64 | PageEntry::P_PRESENT | PageEntry::P_RW);
+            pdpt_entry.0 = pd_alloc_physics.get() as u64
+                | PageEntry::P_PRESENT
+                | PageEntry::P_RW
+                | PageEntry::P_PS;
+            write_memory(
+                pdpt_address + pdpt_index * size_of::<PageEntry>(),
+                &pd_entry,
+            );
+        }
+        if let Some(pdpt_alloc_physics) = pdpt_alloc_physics {
+            pml4_entry.0 = pdpt_alloc_physics.get() as u64
+                | PageEntry::P_PRESENT
+                | PageEntry::P_RW
+                | PageEntry::P_PS;
+            write_memory(
+                pml4 as usize + pml4_index * size_of::<PageEntry>(),
+                &pdpt_entry,
+            );
         }
     }
 
@@ -676,13 +814,6 @@ struct PageTable([PageEntry; 512]);
 #[derive(Debug)]
 #[repr(transparent)]
 struct PageEntry(u64);
-
-impl PageTable {
-    fn uninit() -> Self {
-        // Safety: 全零的页表是有效的
-        unsafe { MaybeUninit::zeroed().assume_init() }
-    }
-}
 
 impl Deref for PageTable {
     type Target = [PageEntry; 512];

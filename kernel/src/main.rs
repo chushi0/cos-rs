@@ -8,7 +8,7 @@ extern crate rlibc;
 
 use core::{arch::asm, slice, time::Duration};
 
-use crate::{bootloader::MemoryRegion, sync::sti};
+use crate::bootloader::MemoryRegion;
 
 pub mod bootloader;
 pub mod display;
@@ -40,11 +40,6 @@ pub unsafe extern "C" fn kmain(
     // 初始化IDLE线程
     multitask::thread::create_idle_thread();
 
-    // 开中断
-    unsafe {
-        sti();
-    }
-
     // 创建一个任务进行测试
     multitask::async_rt::spawn(async {
         loop {
@@ -59,6 +54,7 @@ pub unsafe extern "C" fn kmain(
         }
     });
 
+    // 运行内核异步主任务
     multitask::async_rt::run()
 }
 
