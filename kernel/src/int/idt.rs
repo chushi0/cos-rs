@@ -383,7 +383,7 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
             // 构造栈帧并返回
             "push 0x43", // ss
             "push {stack}", // rsp
-            "pushfq", // rflags
+            "push 0x202", // rflags
             "push 0x38", // cs
             "push {entry}", // rip
             // 加载数据段
