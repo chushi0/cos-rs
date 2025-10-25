@@ -8,7 +8,9 @@ extern crate rlibc;
 
 use core::{arch::asm, slice, time::Duration};
 
-use crate::bootloader::MemoryRegion;
+use alloc::boxed::Box;
+
+use crate::{bootloader::MemoryRegion, sync::sti};
 
 pub mod bootloader;
 pub mod display;
@@ -39,6 +41,21 @@ pub unsafe extern "C" fn kmain(
     multitask::thread::create_kernel_thread();
     // 初始化IDLE线程
     multitask::thread::create_idle_thread();
+    // 模拟阻塞线程，若无抢占调度，则一旦进入此线程，则无法再执行其他线程
+    unsafe {
+        extern "C" fn busy_loop() -> ! {
+            unsafe {
+                sti();
+            }
+            loop {}
+        }
+        multitask::thread::create_thread(
+            None,
+            busy_loop as usize as u64,
+            Box::leak(Box::new([0u8; 4096])) as *const u8 as usize as u64,
+            false,
+        );
+    }
 
     // 创建一个任务进行测试
     multitask::async_rt::spawn(async {

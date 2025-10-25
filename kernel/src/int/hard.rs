@@ -218,6 +218,10 @@ interrupt_handler! {
         unsafe {
             send_eoi(IRQ_TIMER);
         }
+
+        // 抢占调度
+        // TODO: 这里应该计算当前线程剩余时间片，而不是每次计时器中断都进行切换
+        multitask::thread::thread_yield(false);
     }
 }
 
