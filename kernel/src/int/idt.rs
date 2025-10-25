@@ -384,14 +384,8 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
             "push 0x43", // ss
             "push {stack}", // rsp
             "push 0x202", // rflags
-            "push 0x38", // cs
+            "push 0x3B", // cs
             "push {entry}", // rip
-            // 加载数据段
-            "mov ax, 0x40",
-            "mov ds, ax",
-            "mov es, ax",
-            "mov fs, ax",
-            "mov gs, ax",
             // 清空寄存器以防泄露信息
             "xor rax, rax",
             "xor rbx, rbx",
