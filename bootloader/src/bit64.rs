@@ -22,12 +22,12 @@ static mut GDT: [GdtEntry; 9] = [
     GdtEntry::null(),  // 0x00
     GdtEntry::null(),  // 0x08 Loader Code
     GdtEntry::null(),  // 0x10 Loader Data
-    GdtEntry::code(),  // 0x18 Kernel Code
+    GdtEntry::code(),  // 0x18 Kernel Code  内核段必须先CS再SS，这是IDT和syscall要求的
     GdtEntry::data(),  // 0x20 Kernel Data
     GdtEntry::null(),  // 0x28 Tss Low
     GdtEntry::null(),  // 0x30 Tss High
-    GdtEntry::ucode(), // 0x38 User Code
-    GdtEntry::udata(), // 0x40 User Data
+    GdtEntry::udata(), // 0x3B User Data  用户段必须先SS再CS，这是syscall要求的
+    GdtEntry::ucode(), // 0x43 User Code
 ];
 static mut GDTR: DescriptorTablePointer = DescriptorTablePointer::uninit();
 

@@ -45,9 +45,13 @@ pub unsafe extern "C" fn kmain(
     unsafe {
         memory::physics::init(slice::from_raw_parts(memory_region_ptr, memory_region_len));
     }
+    // 初始化per-cpu结构
+    unsafe {
+        sync::percpu::init();
+    }
 
     // 初始化内核线程
-    multitask::thread::create_kernel_thread();
+    multitask::thread::create_kernel_async_thread();
     // 初始化IDLE线程
     multitask::thread::create_idle_thread();
     // 模拟阻塞线程，若无抢占调度，则一旦进入此线程，则无法再执行其他线程

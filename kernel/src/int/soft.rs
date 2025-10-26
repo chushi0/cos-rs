@@ -3,7 +3,6 @@ use core::arch::asm;
 use crate::{
     int::idt::{StackFrame, StackFrameWithErrorCode},
     interrupt_handler, kprintln, loop_hlt,
-    sync::int::cli,
 };
 
 interrupt_handler! {
@@ -61,6 +60,7 @@ interrupt_handler! {
 interrupt_handler! {
     #[with_error_code]
     fn general_protection(stack: &mut StackFrameWithErrorCode) {
+        unsafe { crate::sync::int::cli(); }
         kprintln!("general protection: {stack:x?}");
         loop_hlt();
     }
@@ -69,7 +69,6 @@ interrupt_handler! {
 interrupt_handler! {
     #[with_error_code]
     fn page_fault(stack: &mut StackFrameWithErrorCode) {
-        unsafe{cli();}
         kprintln!("page fault: {stack:x?}");
         let fault_addr: usize;
         unsafe {

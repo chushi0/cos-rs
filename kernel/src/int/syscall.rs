@@ -1,17 +1,17 @@
 use core::arch::{asm, naked_asm};
 
+use crate::sync::percpu;
+
 pub(super) unsafe fn init() {
-    const IA32_EFER: u32 = 0xc000_0080;
+    const IA32_EFER: u32 = 0xc0000080;
     const IA32_STAR: u32 = 0xC0000081;
     const IA32_LSTAR: u32 = 0xC0000082;
     const IA32_FMASK: u32 = 0xC0000084;
 
     // 开启SCE
     unsafe {
-        #[allow(unused_assignments)]
-        let mut efer_low = 0u32;
-        #[allow(unused_assignments)]
-        let mut efer_high = 0u32;
+        let mut efer_low: u32;
+        let mut efer_high: u32;
         asm!(
             "rdmsr",
             in("ecx") IA32_EFER,
@@ -30,14 +30,14 @@ pub(super) unsafe fn init() {
     }
 
     // 设置代码段
-    const USER_CS: u16 = 0x3B;
-    const KERNEL_CS: u16 = 0x08;
+    const USER_SS: u16 = 0x3B;
+    const KERNEL_CS: u16 = 0x18;
     unsafe {
         asm!(
             "wrmsr",
             in("ecx") IA32_STAR,
-            in("eax") ((USER_CS as u32 )<< 16) | (KERNEL_CS as u32),
-            in("edx") 0,
+            in("eax") 0,
+            in("edx") ((USER_SS as u32 - 0x08) << 16) | (KERNEL_CS as u32),
             options(nostack, preserves_flags)
         );
     }
@@ -47,8 +47,8 @@ pub(super) unsafe fn init() {
         asm!(
             "wrmsr",
             in("ecx") IA32_LSTAR,
-            in("eax") ((syscall_enter as u64) & 0xFFFF_FFFF) as u32,
-            in("edx") (((syscall_enter as u64) >> 32) & 0xFFFF_FFFF) as u32,
+            in("eax") ((syscall_entry as u64) & 0xFFFF_FFFF) as u32,
+            in("edx") (((syscall_entry as u64) >> 32) & 0xFFFF_FFFF) as u32,
             options(nostack, preserves_flags)
         );
     }
@@ -85,9 +85,44 @@ pub(super) unsafe fn init() {
 ///
 /// 返回：rax
 #[unsafe(naked)]
-extern "C" fn syscall_enter() {
+extern "C" fn syscall_entry() {
     naked_asm!(
+        // 切到内核gs
+        "swapgs",
+        // 切换栈
+        "mov qword ptr gs:[{syscall_user_stack_offset}], rsp",
+        "mov rsp, gs:[{syscall_stack_offset}]",
+        // 保存现场
+        "push rcx",
+        "push r11",
+        "push qword ptr gs:[{syscall_user_stack_offset}]",
+        "push rbp",
+        "mov rbp, rsp",
+        // 对齐栈
+        "and rsp, 0xfffffffffffffff0",
+        // 开中断
+        "sti",
+        // 调用中断处理函数
+        "call {syscall_handler}",
+        // 关中断
+        "cli",
+        // 恢复现场
+        "mov rsp, rbp",
+        "pop rbp",
+        "pop qword ptr gs:[{syscall_user_stack_offset}]",
+        "pop r11",
+        "pop rcx",
+        "mov rsp, qword ptr gs:[{syscall_user_stack_offset}]",
+        // 切回用户gs
+        "swapgs",
         // 返回用户态
-        "sysretq"
+        "sysretq",
+        syscall_user_stack_offset = const percpu::OFFSET_SYSCALL_USER_STACK,
+        syscall_stack_offset = const percpu::OFFSET_SYSCALL_STACK,
+        syscall_handler = sym syscall_handler
     )
+}
+
+extern "C" fn syscall_handler() -> u64 {
+    0
 }

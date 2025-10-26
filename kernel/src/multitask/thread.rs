@@ -17,6 +17,7 @@ use crate::{
     memory::{self, physics::AllocFrameHint},
     multitask,
     sync::{
+        self,
         int::{IrqGuard, sti},
         spin::SpinLock,
     },
@@ -27,16 +28,6 @@ static READY_THREADS: SpinLock<VecDeque<Weak<SpinLock<Thread>>>> = SpinLock::new
 static TERMINATED_THREADS: SpinLock<VecDeque<Weak<SpinLock<Thread>>>> =
     SpinLock::new(VecDeque::new());
 static THREAD_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
-
-// TODO: 多核CPU后，修改到per-cpu内存页
-static mut CURRENT_THREAD: Option<Arc<SpinLock<Thread>>> = None;
-
-// TODO: IDLE THREAD应当每个CPU一个
-static mut IDLE_THREAD: Option<Arc<SpinLock<Thread>>> = None;
-static mut IDLE_THREAD_ID: u64 = 0;
-
-// TODO: KERNEL THREAD 也应该每个CPU一个，而且全局可访问
-static mut KERNEL_THREAD_ID: u64 = 0;
 
 // RSP0栈大小（8K）
 const RSP0_PAGE_COUNT: usize = 2;
@@ -178,17 +169,15 @@ pub fn create_idle_thread() {
 
     let _guard = unsafe { IrqGuard::cli() };
     THREADS.lock().insert(thread_id, thread.clone());
-    unsafe {
-        IDLE_THREAD = Some(thread);
-        IDLE_THREAD_ID = thread_id;
-    }
+    sync::percpu::set_idle_thread_id(thread_id);
 }
 
-/// 将当前CPU执行线程创建为内核线程
+/// 将当前CPU执行线程创建为内核异步线程
 ///
 /// 此函数将当前线程封装为一个内核线程对象，并加入到全局队列中
 /// 线程创建后即自动挂载为当前线程，并立即为运行状态
-pub fn create_kernel_thread() {
+#[inline(never)]
+pub fn create_kernel_async_thread() {
     let thread_id = THREAD_ID_GENERATOR.fetch_add(1, Ordering::SeqCst) + 1;
     let context = Context::uninit();
     let thread = Thread {
@@ -202,15 +191,13 @@ pub fn create_kernel_thread() {
 
     let _guard = unsafe { IrqGuard::cli() };
     THREADS.lock().insert(thread_id, thread.clone());
-    unsafe {
-        CURRENT_THREAD = Some(thread);
-        KERNEL_THREAD_ID = thread_id;
-    }
+    sync::percpu::set_current_thread_id(thread_id);
+    sync::percpu::set_kernel_async_thread_id(thread_id);
 }
 
 /// 唤醒内核线程，用于内核异步运行时
 pub fn wake_kernel_thread() {
-    wake_thread(unsafe { KERNEL_THREAD_ID });
+    wake_thread(sync::percpu::get_kernel_async_thread_id());
 }
 
 /// 唤醒指定的线程
@@ -236,9 +223,9 @@ pub fn wake_thread(thread_id: u64) {
 
 /// 获取当前正在执行的线程
 pub fn current_thread() -> Option<Arc<SpinLock<Thread>>> {
+    let thread_id = sync::percpu::get_current_thread_id();
     let _guard = unsafe { IrqGuard::cli() };
-    // Safety: CURRENT_THREAD为per-cpu变量，访问是安全的
-    unsafe { (*&raw const CURRENT_THREAD).clone() }
+    THREADS.lock().get(&thread_id).cloned()
 }
 
 /// 将当前CPU执行上下文切换到指定上下文
@@ -310,7 +297,7 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
             };
 
             // 将旧线程放入指定队列，如果是IDLE线程，则不放入
-            let is_idle_thread = thread_id == IDLE_THREAD_ID;
+            let is_idle_thread = thread_id == sync::percpu::get_idle_thread_id();
             if !is_idle_thread {
                 match new_status {
                     ThreadStatus::Ready => READY_THREADS.lock().push_back(Arc::downgrade(&thread)),
@@ -330,6 +317,7 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
         unsafe {
             let thread = Arc::from_raw(thread);
             let mut lock = thread.lock();
+            let thread_id = lock.thread_id;
             // 获取上下文信息
             let context = &raw const lock.context;
             // 将新线程设置为运行状态
@@ -342,7 +330,7 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
             let process_id = lock.process_id;
             drop(lock);
             // 设置当前线程
-            CURRENT_THREAD = Some(thread);
+            sync::percpu::set_current_thread_id(thread_id);
             // 设置切换栈
             let addr = if let Some(rsp0) = rsp0 {
                 rsp0.get() + RSP0_SIZE as u64
@@ -350,6 +338,7 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
                 0
             };
             int::tss::set_rsp0(addr);
+            sync::percpu::set_syscall_stack(addr);
             // 设置页表
             let pml4 = if let Some(process_id) = process_id
                 && let Some(process) = multitask::process::get_process(process_id.get())
@@ -458,7 +447,9 @@ pub fn thread_yield(suspend: bool) {
 
     // 如果当前线程预期要被挂起，且已无线程可执行，则进入中断线程
     if suspend && next_thread.is_none() {
-        next_thread = unsafe { (*&raw const IDLE_THREAD).clone() };
+        let idle_thread_id = sync::percpu::get_idle_thread_id();
+        let _guard = unsafe { IrqGuard::cli() };
+        next_thread = THREADS.lock().get(&idle_thread_id).cloned();
     }
 
     // 仅当需要切换时，进行线程切换

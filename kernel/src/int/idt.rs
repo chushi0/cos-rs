@@ -44,26 +44,26 @@ type IntFn = extern "C" fn();
 #[repr(C)]
 #[allow(unused)]
 pub struct StackFrame {
-    r15: u64,
-    r14: u64,
-    r13: u64,
-    r12: u64,
-    r11: u64,
-    r10: u64,
-    r9: u64,
-    r8: u64,
-    rbp: u64,
-    rdi: u64,
-    rsi: u64,
-    rdx: u64,
-    rcx: u64,
-    rbx: u64,
-    rax: u64,
-    rip: u64,
-    cs: u64,
-    rflags: u64,
-    rsp: u64,
-    ss: u64,
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
+    pub rbp: u64,
+    pub rdi: u64,
+    pub rsi: u64,
+    pub rdx: u64,
+    pub rcx: u64,
+    pub rbx: u64,
+    pub rax: u64,
+    pub rip: u64,
+    pub cs: u64,
+    pub rflags: u64,
+    pub rsp: u64,
+    pub ss: u64,
 }
 
 /// 中断调用上下文，通过修改对应值可以改变中断返回时对应寄存器的值
@@ -73,27 +73,27 @@ pub struct StackFrame {
 #[repr(C)]
 #[allow(unused)]
 pub(super) struct StackFrameWithErrorCode {
-    r15: u64,
-    r14: u64,
-    r13: u64,
-    r12: u64,
-    r11: u64,
-    r10: u64,
-    r9: u64,
-    r8: u64,
-    rbp: u64,
-    rdi: u64,
-    rsi: u64,
-    rdx: u64,
-    rcx: u64,
-    rbx: u64,
-    rax: u64,
-    error_code: u64,
-    rip: u64,
-    cs: u64,
-    rflags: u64,
-    rsp: u64,
-    ss: u64,
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
+    pub rbp: u64,
+    pub rdi: u64,
+    pub rsi: u64,
+    pub rdx: u64,
+    pub rcx: u64,
+    pub rbx: u64,
+    pub rax: u64,
+    pub error_code: u64,
+    pub rip: u64,
+    pub cs: u64,
+    pub rflags: u64,
+    pub rsp: u64,
+    pub ss: u64,
 }
 
 /// 主CPU的中断描述符表
@@ -386,10 +386,10 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
     unsafe {
         asm!(
             // 构造栈帧并返回
-            "push 0x43", // ss
+            "push 0x3b", // ss
             "push {stack}", // rsp
             "push 0x202", // rflags
-            "push 0x3B", // cs
+            "push 0x43", // cs
             "push {entry}", // rip
             // 清空寄存器以防泄露信息
             "xor rax, rax",
@@ -407,6 +407,8 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
             "xor r13, r13",
             "xor r14, r14",
             "xor r15, r15",
+            // gs
+            "swapgs",
             // 中断返回
             "iretq",
             entry = in(reg) rip,
@@ -423,7 +425,22 @@ macro_rules! interrupt_handler {
         pub extern "C" fn $name() {
             // 实际执行函数要写 extern "C"，否则默认是 rust-call，而rust-call的abi并未稳定
             extern "C" fn $name($stack: &mut $frame) {
-                $($body)*
+                fn $name($stack: &mut $frame) {
+                    $($body)*
+                }
+
+                let kernel_gs = $stack.cs == 0x18;
+                if !kernel_gs {
+                    unsafe {
+                        ::core::arch::asm!("swapgs");
+                    }
+                }
+                $name($stack);
+                if !kernel_gs {
+                    unsafe {
+                        ::core::arch::asm!("swapgs");
+                    }
+                }
             }
 
             ::core::arch::naked_asm!(
@@ -465,7 +482,22 @@ macro_rules! interrupt_handler {
         pub extern "C" fn $name() {
             // 实际执行函数要写 extern "C"，否则默认是 rust-call，而rust-call的abi并未稳定
             extern "C" fn $name($stack: &mut $frame) {
-                $($body)*
+                fn $name($stack: &mut $frame) {
+                    $($body)*
+                }
+
+                let kernel_gs = $stack.cs == 0x18;
+                if !kernel_gs {
+                    unsafe {
+                        ::core::arch::asm!("swapgs");
+                    }
+                }
+                $name($stack);
+                if !kernel_gs {
+                    unsafe {
+                        ::core::arch::asm!("swapgs");
+                    }
+                }
             }
 
             ::core::arch::naked_asm!(
