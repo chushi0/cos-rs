@@ -8,7 +8,7 @@ use core::{
 
 use crate::{
     bootloader::MemoryRegion,
-    sync::{IrqGuard, SpinLock},
+    sync::{int::IrqGuard, spin::SpinLock},
 };
 
 /// 系统可用的内存范围

@@ -8,7 +8,7 @@ use crate::{
         self,
         physics::{AllocFrameHint, alloc_mapped_frame},
     },
-    sync::{IrqGuard, SpinLock},
+    sync::{int::IrqGuard, spin::SpinLock},
 };
 
 static KERNEL_HEAP: SpinLock<KernelHeap> = SpinLock::new(KernelHeap::uninit());

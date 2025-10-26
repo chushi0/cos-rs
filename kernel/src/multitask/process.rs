@@ -13,7 +13,7 @@ use crate::{
         self,
         physics::{AccessMemoryError, AllocFrameHint},
     },
-    sync::{IrqGuard, SpinLock},
+    sync::{int::IrqGuard, spin::SpinLock},
 };
 
 static PROCESSES: SpinLock<BTreeMap<u64, Arc<SpinLock<Process>>>> = SpinLock::new(BTreeMap::new());

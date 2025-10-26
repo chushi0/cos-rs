@@ -10,7 +10,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 
-use crate::sync::{IrqGuard, SpinLock};
+use crate::sync::{int::IrqGuard, spin::SpinLock};
 
 // 系统时间，以us为单位
 static SYSTEM_INSTANT: AtomicU64 = AtomicU64::new(0);

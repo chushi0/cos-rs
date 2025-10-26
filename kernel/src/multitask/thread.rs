@@ -16,7 +16,10 @@ use crate::{
     int,
     memory::{self, physics::AllocFrameHint},
     multitask,
-    sync::{IrqGuard, SpinLock, sti},
+    sync::{
+        int::{IrqGuard, sti},
+        spin::SpinLock,
+    },
 };
 
 static THREADS: SpinLock<BTreeMap<u64, Arc<SpinLock<Thread>>>> = SpinLock::new(BTreeMap::new());

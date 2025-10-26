@@ -3,7 +3,7 @@ use core::arch::asm;
 use crate::{
     int::idt::{StackFrame, StackFrameWithErrorCode},
     interrupt_handler, kprintln, loop_hlt,
-    sync::cli,
+    sync::int::cli,
 };
 
 interrupt_handler! {

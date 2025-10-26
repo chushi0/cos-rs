@@ -4,7 +4,7 @@ use core::{
     ptr, slice,
 };
 
-use crate::sync::{IrqGuard, SpinLock};
+use crate::sync::{int::IrqGuard, spin::SpinLock};
 
 pub static WRITER: SpinLock<Option<VgaTextWriter>> = SpinLock::new(None);
 

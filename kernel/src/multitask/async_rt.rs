@@ -14,7 +14,10 @@ use alloc::{
 
 use crate::{
     multitask::thread,
-    sync::{IrqGuard, SpinLock, sti},
+    sync::{
+        int::{IrqGuard, sti},
+        spin::SpinLock,
+    },
 };
 
 // 运行时结构

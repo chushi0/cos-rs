@@ -1,6 +1,6 @@
 use core::{arch::asm, mem::MaybeUninit, slice};
 
-use crate::sync::IrqGuard;
+use crate::sync::int::IrqGuard;
 
 #[repr(C, packed)]
 struct DescriptorTablePointer {

@@ -18,7 +18,7 @@ use alloc::boxed::Box;
 use crate::{
     bootloader::MemoryRegion,
     multitask::process::ProcessPageType,
-    sync::{IrqGuard, sti},
+    sync::int::{IrqGuard, sti},
 };
 
 pub mod bootloader;
