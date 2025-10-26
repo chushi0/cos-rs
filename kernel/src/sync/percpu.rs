@@ -20,7 +20,6 @@ macro_rules! per_cpu_data {
     ($ident:ident, $offset_const:ident, $setter:ident, $getter:ident) => {
         pub const $offset_const: usize = offset_of!(PerCpuStruct, $ident);
 
-        #[inline(never)]
         pub fn $setter(val: u64) {
             unsafe {
                 asm!(

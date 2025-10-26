@@ -176,7 +176,6 @@ pub fn create_idle_thread() {
 ///
 /// 此函数将当前线程封装为一个内核线程对象，并加入到全局队列中
 /// 线程创建后即自动挂载为当前线程，并立即为运行状态
-#[inline(never)]
 pub fn create_kernel_async_thread() {
     let thread_id = THREAD_ID_GENERATOR.fetch_add(1, Ordering::SeqCst) + 1;
     let context = Context::uninit();
