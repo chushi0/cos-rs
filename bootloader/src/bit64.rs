@@ -20,14 +20,14 @@ struct DescriptorTablePointer {
 
 static mut GDT: [GdtEntry; 9] = [
     GdtEntry::null(),  // 0x00
-    GdtEntry::null(),  // 0x08
-    GdtEntry::null(),  // 0x10
-    GdtEntry::code(),  // 0x18
-    GdtEntry::data(),  // 0x20
-    GdtEntry::null(),  // 0x28
-    GdtEntry::null(),  // 0x30
-    GdtEntry::ucode(), // 0x38
-    GdtEntry::udata(), // 0x40
+    GdtEntry::null(),  // 0x08 Loader Code
+    GdtEntry::null(),  // 0x10 Loader Data
+    GdtEntry::code(),  // 0x18 Kernel Code
+    GdtEntry::data(),  // 0x20 Kernel Data
+    GdtEntry::null(),  // 0x28 Tss Low
+    GdtEntry::null(),  // 0x30 Tss High
+    GdtEntry::ucode(), // 0x38 User Code
+    GdtEntry::udata(), // 0x40 User Data
 ];
 static mut GDTR: DescriptorTablePointer = DescriptorTablePointer::uninit();
 

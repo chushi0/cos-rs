@@ -111,9 +111,10 @@ pub unsafe extern "C" fn kmain(
             // 写入代码
             // 0x90 nop
             // 0xcc int 3
+            // 0x0f 0x05 syscall
             // 0xf4 hlt 特权指令，会立即触发#GP
             // 0xeb 0xfe jmp $-2 会卡在这里
-            let code: [u8; _] = [0x90, 0xcc, /*0xf4,*/ 0xeb, 0xfe];
+            let code: [u8; _] = [0x90, 0xcc, 0x0f, 0x05, /*0xf4,*/ 0xeb, 0xfe];
             if multitask::process::write_user_process_memory(process_id, code_page.get(), &code)
                 .is_err()
             {
