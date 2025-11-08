@@ -448,6 +448,9 @@ impl Fat32FileSystem {
 struct Fat32FileMetadata {
     short: DirectoryEntryShort,
     long: Vec<DirectoryEntryLong>,
+    start_cluster: u32,
+    start_sector: u64,
+    start_sector_offset: u32,
     short_cluster: u32,
     short_sector: u64,
     short_sector_offset: u32,
@@ -522,6 +525,9 @@ impl Fat32FileMetadata {
         Self {
             short,
             long,
+            start_cluster: 0,
+            start_sector: 0,
+            start_sector_offset: 0,
             short_cluster: 0,
             short_sector: 0,
             short_sector_offset: 0,
@@ -601,6 +607,9 @@ impl Fat32Inner {
     {
         let mut cluster = cluster;
         let mut entry_long = Vec::new();
+        let mut start_cluster = 0;
+        let mut start_sector = 0;
+        let mut start_sector_offset = 0;
 
         // 预分配簇空间
         let mut cluster_buffer = alloc::vec![0u8; self.device.block_size() as usize * self.bpb.sectors_per_cluster as usize];
@@ -636,6 +645,11 @@ impl Fat32Inner {
                     let attr = unsafe { entry.short.attr };
                     if attr == DirectoryEntryLong::ATTR {
                         // 长字段先push到vec里，等全部取完后再检查文件名是否一致
+                        if entry_long.is_empty() {
+                            start_cluster = cluster;
+                            start_sector = sector as u64 + i as u64;
+                            start_sector_offset = j as u32;
+                        }
                         // Safety: 我们已经通过attr确认entry为long类型
                         unsafe {
                             entry_long.push(ManuallyDrop::into_inner(entry.long));
@@ -659,6 +673,9 @@ impl Fat32Inner {
                     let should_continue = yield_fn(Fat32FileMetadata {
                         short: entry,
                         long: core::mem::take(&mut entry_long),
+                        start_cluster,
+                        start_sector,
+                        start_sector_offset,
                         short_cluster: cluster,
                         short_sector: sector as u64 + i as u64,
                         short_sector_offset: j as u32,
@@ -1084,7 +1101,68 @@ impl Fat32Inner {
         // metadata 中包含了条目所在位置，可以直接删除
         // 删除前需要同步把之前的长条目也删除
 
-        // TODO
+        let block_size = self.device.block_size();
+        let mut cluster = metadata.start_cluster;
+        let mut cluster_buffer =
+            alloc::vec![0u8; block_size as usize * self.bpb.sectors_per_cluster as usize];
+        let mut loop_finish = false;
+
+        // 循环各簇
+        while cluster != FatEntry::FAT_ENTRY_FREE && cluster < FatEntry::FAT_ENTRY_EOC_START {
+            // 读盘
+            let sector = self.get_sector_by_cluster(cluster);
+            self.device
+                .read_blocks(
+                    sector,
+                    self.bpb.sectors_per_cluster as u64,
+                    &mut cluster_buffer,
+                )
+                .await?;
+
+            // 循环各扇区
+            let sector_start = if cluster == metadata.start_cluster {
+                (metadata.start_sector - sector) as usize
+            } else {
+                0
+            };
+            'sector_loop: for i in sector_start..self.bpb.sectors_per_cluster as usize {
+                let buffer = &mut cluster_buffer[i * block_size as usize..];
+
+                // 循环各条目
+                let offset_start = if i as u64 + sector == metadata.short_sector {
+                    metadata.start_sector_offset as usize
+                } else {
+                    0
+                };
+                for j in
+                    offset_start..(self.bpb.bytes_per_sector as usize) / size_of::<DirectoryEntry>()
+                {
+                    // 清空此条目
+                    buffer[j * size_of::<DirectoryEntry>()..(j + 1) * size_of::<DirectoryEntry>()]
+                        .fill(0);
+
+                    // 如果达到终止条件，退出循环
+                    if cluster == metadata.short_cluster
+                        && sector + i as u64 == metadata.short_sector
+                        && j as u32 == metadata.short_sector_offset
+                    {
+                        loop_finish = true;
+                        break 'sector_loop;
+                    }
+                }
+            }
+
+            // 存盘
+            self.device
+                .write_blocks(sector, self.bpb.sectors_per_cluster as u64, &cluster_buffer)
+                .await?;
+
+            if loop_finish {
+                break;
+            }
+
+            cluster = self.get_next_cluster(cluster).await?.0;
+        }
 
         Ok(())
     }
@@ -1489,20 +1567,121 @@ impl FileHandle for Fat32FileHandle {
 
     fn move_pointer(&mut self, position: u64) -> BoxFuture<'_, Result<(), FileSystemError>> {
         Box::pin(async move {
-            self.pointer = position;
+            if self.closed {
+                return Err(FileSystemError::FileClosed);
+            }
+
+            let file_size = self.metadata.short.file_size;
+            self.pointer = position.max(file_size as u64);
             Ok(())
         })
     }
 
     fn get_pointer(&mut self) -> BoxFuture<'_, Result<u64, FileSystemError>> {
-        Box::pin(async move { Ok(self.pointer) })
+        Box::pin(async move {
+            if self.closed {
+                return Err(FileSystemError::FileClosed);
+            }
+
+            Ok(self.pointer)
+        })
     }
 
     fn read<'fut>(
         &'fut mut self,
         buf: &'fut mut [u8],
     ) -> BoxFuture<'fut, Result<u64, FileSystemError>> {
-        todo!()
+        Box::pin(async move {
+            let inner = self.inner.upgrade().ok_or(FileSystemError::Unmounted)?;
+            let inner = inner.read().await;
+
+            let file_size = self.metadata.short.file_size as u64;
+            let read_length = buf.len().min((file_size - self.pointer) as usize);
+
+            // 已经向buf中写入的字节数量
+            let mut assign_offset = 0;
+            // 循环中已经跳过的文件字节数量
+            let mut offset = 0;
+            // 剩余要写入buf的字节数量
+            let mut remain = read_length as u64;
+            // 当前循环的簇
+            let mut cluster = self.metadata.start_cluster();
+            // 每扇区有效字节数
+            let bytes_per_sector = inner.bpb.bytes_per_sector as u64;
+            // 每簇有效字节数
+            let bytes_per_cluster = bytes_per_sector * inner.bpb.sectors_per_cluster as u64;
+            let block_size = inner.device.block_size();
+            // 簇缓冲
+            let mut cluster_buffer =
+                alloc::vec![0u8; block_size as usize* inner.bpb.sectors_per_cluster as usize];
+
+            // 循环各簇，找到要读取的部分
+            'cluster_loop: while cluster != FatEntry::FAT_ENTRY_FREE
+                && cluster < FatEntry::FAT_ENTRY_EOC_START
+                && remain > 0
+            {
+                if offset + bytes_per_cluster < self.pointer {
+                    offset += bytes_per_cluster;
+                    cluster = inner.get_next_cluster(cluster).await?.0;
+                    continue;
+                }
+
+                // 读盘
+                inner
+                    .device
+                    .read_blocks(
+                        inner.get_sector_by_cluster(cluster),
+                        inner.bpb.sectors_per_cluster as u64,
+                        &mut cluster_buffer,
+                    )
+                    .await?;
+
+                // 循环各扇区
+                for i in 0..inner.bpb.sectors_per_cluster as usize {
+                    if offset + bytes_per_sector < self.pointer {
+                        offset += bytes_per_cluster;
+                        continue;
+                    }
+
+                    // 复制内容
+                    let copy_start = self.pointer - offset;
+                    let copy_length = (bytes_per_sector - copy_start).min(remain);
+                    assert!(
+                        cluster_buffer.len()
+                            >= i as usize * block_size as usize
+                                + copy_start as usize
+                                + copy_length as usize
+                    );
+                    assert!(buf.len() >= assign_offset as usize + copy_length as usize);
+                    // Safety: 我们已靠断言保证复制是范围是安全的
+                    unsafe {
+                        copy_nonoverlapping(
+                            cluster_buffer
+                                .as_ptr()
+                                .add(i as usize * block_size as usize + copy_start as usize),
+                            buf.as_mut_ptr().add(assign_offset as usize),
+                            copy_length as usize,
+                        );
+                    }
+
+                    // 维护循环不变量
+                    assign_offset += copy_length;
+                    offset += bytes_per_cluster;
+                    self.pointer += copy_length;
+                    remain -= copy_length;
+
+                    assert!(offset == self.pointer);
+
+                    if remain == 0 {
+                        break 'cluster_loop;
+                    }
+                }
+
+                cluster = inner.get_next_cluster(cluster).await?.0;
+            }
+
+            Ok(read_length as u64)
+        })
     }
 
     fn write<'fut>(
