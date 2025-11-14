@@ -1,6 +1,9 @@
-use core::arch::{asm, naked_asm};
+use core::{
+    arch::{asm, naked_asm},
+    cmp::Ordering,
+};
 
-use crate::sync::percpu;
+use crate::{kprintln, memory, sync::percpu};
 
 pub(super) unsafe fn init() {
     const IA32_EFER: u32 = 0xc0000080;
@@ -102,8 +105,34 @@ extern "C" fn syscall_entry() {
         "and rsp, 0xfffffffffffffff0",
         // 开中断
         "sti",
+        // 我们先存一下参数
+        "push rsi",
+        "push rdx",
+        "push r10",
+        "push r8",
+        "push r9",
+        // 查表获取中断处理函数
+        "mov rsi, rdi",
+        "mov rdi, rax",
+        "sub rsp, 8",
+        "mov rdx, rsp",
+        "call {query_syscall_handler}",
         // 调用中断处理函数
-        "call {syscall_handler}",
+        "pop rax",
+        "pop r8",
+        "pop rcx",
+        "pop rdx",
+        "pop rsi",
+        "pop rdi",
+        "cmp rax, 0",
+        "je 0f",
+        "call rax",
+        "jmp 1f",
+        // 中断处理函数不存在的情况
+        "0:",
+        "mov rax, {syscall_not_found}",
+        // 中断处理函数调用结束
+        "1:",
         // 关中断
         "cli",
         // 恢复现场
@@ -119,10 +148,181 @@ extern "C" fn syscall_entry() {
         "sysretq",
         syscall_user_stack_offset = const percpu::OFFSET_SYSCALL_USER_STACK,
         syscall_stack_offset = const percpu::OFFSET_SYSCALL_STACK,
-        syscall_handler = sym syscall_handler
+        query_syscall_handler = sym query_syscall_handler,
+        syscall_not_found = const cos_sys::error::ErrorKind::BadArgument as u64,
     )
 }
 
-extern "C" fn syscall_handler() -> u64 {
-    0
+type SyscallEntry = (u64, u64, extern "C" fn(u64, u64, u64, u64, u64) -> u64);
+const SYSCALL_HANDLER: &[SyscallEntry] = &[
+    (0, 0, syscall_test),
+    (
+        cos_sys::idx::IDX_EXIT,
+        cos_sys::idx::IDX_SUB_EXIT_PROCESS,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_EXIT,
+        cos_sys::idx::IDX_SUB_EXIT_THREAD,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_THREAD,
+        cos_sys::idx::IDX_SUB_THREAD_CURRENT,
+        syscall_current_thread,
+    ),
+    (
+        cos_sys::idx::IDX_THREAD,
+        cos_sys::idx::IDX_SUB_THREAD_SUSPEND,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_THREAD,
+        cos_sys::idx::IDX_SUB_THREAD_RESUME,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_THREAD,
+        cos_sys::idx::IDX_SUB_THREAD_KILL,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_THREAD,
+        cos_sys::idx::IDX_SUB_THREAD_CREATE,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_MEMORY,
+        cos_sys::idx::IDX_SUB_MEMORY_ALLOC,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_MEMORY,
+        cos_sys::idx::IDX_SUB_MEMORY_FREE,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_MEMORY,
+        cos_sys::idx::IDX_SUB_MEMORY_TEST,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_MEMORY,
+        cos_sys::idx::IDX_SUB_MEMORY_MODIFY,
+        syscall_test,
+    ),
+];
+
+// assert
+const _: () = {
+    let len = SYSCALL_HANDLER.len();
+    let mut i = 0;
+    while i + 1 < len {
+        assert!(matches!(
+            cmp_syscall_handler(&SYSCALL_HANDLER[i], &SYSCALL_HANDLER[i + 1]),
+            Ordering::Less
+        ));
+        i += 1;
+    }
+
+    const fn cmp_syscall_handler(entry1: &SyscallEntry, entry2: &SyscallEntry) -> Ordering {
+        if entry1.0 != entry2.0 {
+            if entry1.0 < entry2.0 {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        } else {
+            if entry1.1 < entry2.1 {
+                Ordering::Less
+            } else if entry1.1 > entry2.1 {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        }
+    }
+};
+
+/// 查询syscall
+/// 
+/// 查询 (id, sub_id) 对应的系统调用编号。
+/// 如果存在，将地址写入ptr。如果不存在，将0写入ptr。
+/// 
+/// Safety:
+/// 调用方保证ptr是一个可以写入的指针
+unsafe extern "C" fn query_syscall_handler(id: u64, sub_id: u64, ptr: *mut u64) {
+    let handler = SYSCALL_HANDLER
+        .binary_search_by(|&(entry_id, entry_sub_id, _)| {
+            (entry_id, entry_sub_id).cmp(&(id, sub_id))
+        })
+        .map_or(0, |index| SYSCALL_HANDLER[index].2 as u64);
+    unsafe {
+        *ptr = handler;
+    }
+}
+
+const SYSCALL_SUCCESS: u64 = cos_sys::error::ErrorKind::Success as u64;
+
+macro_rules! syscall_handler {
+    (fn $name:ident() -> u64 { $($t:tt)* }) => {
+        extern "C" fn $name(_p1: u64, _p2: u64, _p3: u64, _p4: u64, _p5: u64) -> u64 { $($t)* }
+    };
+    (fn $name:ident($p1:ident: u64) -> u64 { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, _p2: u64, _p3: u64, _p4: u64, _p5: u64) -> u64 { $($t)* }
+    };
+    (fn $name:ident($p1:ident: u64, $p2:ident: u64) -> u64 { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, $p2: u64, _p3: u64, _p4: u64, _p5: u64) -> u64 { $($t)* }
+    };
+    (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64) -> u64 { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, _p4: u64, _p5: u64) -> u64 { $($t)* }
+    };
+    (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64, $p4:ident: u64) -> u64 { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, _p5: u64) -> u64 { $($t)* }
+    };
+    (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64, $p4:ident: u64, $p5:ident: u64) -> u64 { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, $p5: u64) -> u64 { $($t)* }
+    };
+
+    (fn $name:ident() { $($t:tt)* }) => {
+        extern "C" fn $name(_p1: u64, _p2: u64, _p3: u64, _p4: u64, _p5: u64) -> u64 { (|| { $($t)* })(); SYSCALL_SUCCESS }
+    };
+    (fn $name:ident($p1:ident: u64) { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, _p2: u64, _p3: u64, _p4: u64, _p5: u64) -> u64 { (|| { $($t)* })(); SYSCALL_SUCCESS }
+    };
+    (fn $name:ident($p1:ident: u64, $p2:ident: u64) { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, $p2: u64, _p3: u64, _p4: u64, _p5: u64) -> u64 { (|| { $($t)* })(); SYSCALL_SUCCESS }
+    };
+    (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64) { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, _p4: u64, _p5: u64) -> u64 { (|| { $($t)* })(); SYSCALL_SUCCESS }
+    };
+    (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64, $p4:ident: u64) { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, _p5: u64) -> u64 { (|| { $($t)* })(); SYSCALL_SUCCESS }
+    };
+    (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64, $p4:ident: u64, $p5:ident: u64) { $($t:tt)* }) => {
+        extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, $p5: u64) -> u64 { (|| { $($t)* })(); SYSCALL_SUCCESS }
+    };
+}
+
+syscall_handler! {
+    fn syscall_test() {
+        kprintln!("syscall test pass");
+    }
+}
+
+syscall_handler! {
+    fn syscall_current_thread(thread_id_ptr: u64) -> u64 {
+        let thread_id_ptr = thread_id_ptr as *mut u64;
+        if !memory::physics::is_user_space_virtual_memory(thread_id_ptr as usize) {
+            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+        }
+        let thread_id = percpu::get_current_thread_id();
+        // Safety:
+        // 1. 我们已经检查指针位于用户空间范围内，写入不会影响内核数据
+        // 2. 如果该页未映射或未对齐，写入会导致软中断产生，但在此处触发软中断不会有问题（与用户态程序触发软中断一致）
+        unsafe {
+            *thread_id_ptr = thread_id;
+        }
+        SYSCALL_SUCCESS
+    }
 }

@@ -432,13 +432,17 @@ fn find_kernel_free_virtual_memory(block: usize) -> Option<NonZeroUsize> {
 
     find_free_virtual_memory(KERNEL_SEARCH_START, KERNEL_SEARCH_END, pml4, block)
 }
+// 用户起始地址
+const USER_SEARCH_START: usize = 0x0000_0080_0000_0000;
+// 用户结束地址
+const USER_SEARCH_END: usize = 0xFFFF_FF80_0000_0000;
+
+/// 判断指定虚拟地址是否是用户空间地址
+pub fn is_user_space_virtual_memory(ptr: usize) -> bool {
+    (USER_SEARCH_START..USER_SEARCH_END).contains(&ptr)
+}
 
 fn find_user_free_virtual_memory(block: usize, pml4: u64) -> Option<NonZeroUsize> {
-    // 用户起始地址
-    const USER_SEARCH_START: usize = 0x0000_0080_0000_0000;
-    // 用户结束地址
-    const USER_SEARCH_END: usize = 0xFFFF_FF80_0000_0000;
-
     find_free_virtual_memory(
         USER_SEARCH_START,
         USER_SEARCH_END,

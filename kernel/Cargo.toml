@@ -16,3 +16,4 @@ strip = "symbols"
 
 [dependencies]
 rlibc = "1.0.0"
+cos-sys = { path = "../user/library/cos-sys" }
