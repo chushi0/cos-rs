@@ -187,6 +187,8 @@ pub enum FileSystemError {
     Unmounted,
     /// 文件已关闭
     FileClosed,
+    /// 文件过大，已超出当前文件系统支持的最大大小
+    FileTooLarge,
 }
 
 impl From<BlockDeviceError> for FileSystemError {

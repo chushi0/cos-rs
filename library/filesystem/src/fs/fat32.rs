@@ -61,6 +61,8 @@ use crate::{
 ///
 /// 此结构提供了 [`Fat32FileSystem::mount`] 和 [`Fat32FileSystem::with_format`] 方法，
 /// 分别用于挂载已有的FAT32文件系统和格式化一个块设备为FAT32文件系统。
+///
+/// 注意：当前文件系统实现有缺陷，并非标准FAT32要求的文件系统，内部做了多个简化逻辑的处理方式。
 pub struct Fat32FileSystem {
     inner: Arc<RwLock<Fat32Inner>>,
 }
@@ -742,6 +744,7 @@ impl Fat32Inner {
 
     /// 根据簇号获取扇区号
     fn get_sector_by_cluster(&self, cluster: u32) -> u64 {
+        assert!(cluster >= 2 && cluster < self.max_cluster + 2);
         self.bpb.reserved_sector_count as u64
             + self.bpb.fat_size_32 as u64 * 2
             + (cluster as u64 - 2) * self.bpb.sectors_per_cluster as u64
@@ -1166,6 +1169,42 @@ impl Fat32Inner {
 
         Ok(())
     }
+
+    /// 修改文件条目
+    ///
+    /// 只修改短条目，不修改长条目
+    async fn update_file_metadata(
+        &mut self,
+        metadata: &Fat32FileMetadata,
+    ) -> Result<(), FileSystemError> {
+        let block_size = self.device.block_size();
+        let mut cluster_buffer = alloc::vec![0u8; block_size as usize];
+
+        // 读盘，短条目所在扇区
+        self.device
+            .read_block(metadata.short_sector, &mut cluster_buffer)
+            .await?;
+
+        // 修改目标位置内容
+        assert!(
+            metadata.short_sector_offset as usize * size_of::<DirectoryEntry>()
+                < block_size as usize
+        );
+        unsafe {
+            let target_ptr = cluster_buffer
+                .as_mut_ptr()
+                .add(metadata.short_sector_offset as usize * size_of::<DirectoryEntry>())
+                as *mut DirectoryEntryShort;
+            *target_ptr = metadata.short.clone();
+        }
+
+        // 写盘
+        self.device
+            .write_block(metadata.short_sector, &mut cluster_buffer)
+            .await?;
+
+        Ok(())
+    }
 }
 
 impl FileSystem for Fat32FileSystem {
@@ -1556,7 +1595,10 @@ impl FileHandle for Fat32FileHandle {
             let mut inner = inner.write().await;
 
             // 取消占用
-            inner.occupied_file.remove(&self.metadata.short_cluster);
+            inner.occupied_file.remove(&self.metadata.start_cluster());
+
+            // 释放弱引用
+            self.inner = Weak::new();
 
             // 关闭标识
             self.closed = true;
@@ -1572,7 +1614,7 @@ impl FileHandle for Fat32FileHandle {
             }
 
             let file_size = self.metadata.short.file_size;
-            self.pointer = position.max(file_size as u64);
+            self.pointer = position.min(file_size as u64);
             Ok(())
         })
     }
@@ -1592,6 +1634,11 @@ impl FileHandle for Fat32FileHandle {
         buf: &'fut mut [u8],
     ) -> BoxFuture<'fut, Result<u64, FileSystemError>> {
         Box::pin(async move {
+            // 文件已关闭
+            if self.closed {
+                return Err(FileSystemError::FileClosed);
+            }
+
             let inner = self.inner.upgrade().ok_or(FileSystemError::Unmounted)?;
             let inner = inner.read().await;
 
@@ -1639,7 +1686,7 @@ impl FileHandle for Fat32FileHandle {
                 // 循环各扇区
                 for i in 0..inner.bpb.sectors_per_cluster as usize {
                     if offset + bytes_per_sector < self.pointer {
-                        offset += bytes_per_cluster;
+                        offset += bytes_per_sector;
                         continue;
                     }
 
@@ -1666,15 +1713,15 @@ impl FileHandle for Fat32FileHandle {
 
                     // 维护循环不变量
                     assign_offset += copy_length;
-                    offset += bytes_per_cluster;
+                    offset += bytes_per_sector;
                     self.pointer += copy_length;
                     remain -= copy_length;
-
-                    assert!(offset == self.pointer);
 
                     if remain == 0 {
                         break 'cluster_loop;
                     }
+
+                    assert!(offset == self.pointer);
                 }
 
                 cluster = inner.get_next_cluster(cluster).await?.0;
@@ -1688,7 +1735,208 @@ impl FileHandle for Fat32FileHandle {
         &'fut mut self,
         buf: &'fut [u8],
     ) -> BoxFuture<'fut, Result<(), FileSystemError>> {
-        todo!()
+        Box::pin(async move {
+            // 文件已关闭
+            if self.closed {
+                return Err(FileSystemError::FileClosed);
+            }
+            // fat32最大支持4G文件，即文件最大大小不能超过u32::MAX
+            if self.pointer + buf.len() as u64 > u32::MAX as u64 {
+                return Err(FileSystemError::FileTooLarge);
+            }
+
+            // 对于写入，分三种情况：
+            // 第一种：覆盖写入。此时不需要申请新簇，直接修改原有簇即可
+            // 第二种：追加写入，但最后一个簇中仍有剩余空间，此时也不需要申请新簇，但要修改文件大小信息
+            // 第三种：追加写入，但最后一个簇中剩余空间不足，此时需要申请新簇，也需要修改文件大小信息
+            // 理论上可以区分三种情况并减小锁粒度，但这里我们选取简单实现，不考虑性能
+            let inner = self.inner.upgrade().ok_or(FileSystemError::Unmounted)?;
+            let mut inner = inner.write().await;
+
+            // 当前文件大小
+            let file_size = self.metadata.short.file_size as u64;
+            // 要写入的长度
+            let write_length = buf.len();
+
+            // 已经写入文件的字节数量
+            let mut write_offset = 0;
+            // 循环中已经跳过的文件字节数量
+            let mut offset = 0;
+            // 剩余要写入文件的字节数量
+            let mut remain = write_length as u64;
+            // 当前循环的簇
+            let mut cluster = self.metadata.start_cluster();
+            // 上次循环的簇
+            let mut last_cluster = 0;
+            // 每扇区有效字节数
+            let bytes_per_sector = inner.bpb.bytes_per_sector as u64;
+            // 每簇有效字节数
+            let bytes_per_cluster = bytes_per_sector * inner.bpb.sectors_per_cluster as u64;
+            let block_size = inner.device.block_size();
+            // 簇缓冲
+            let mut cluster_buffer =
+                alloc::vec![0u8; block_size as usize* inner.bpb.sectors_per_cluster as usize];
+
+            // 循环各簇，找到要修改的部分
+            while cluster != FatEntry::FAT_ENTRY_FREE
+                && cluster < FatEntry::FAT_ENTRY_EOC_START
+                && remain > 0
+            {
+                last_cluster = cluster;
+                if offset + bytes_per_cluster < self.pointer {
+                    offset += bytes_per_cluster;
+                    cluster = inner.get_next_cluster(cluster).await?.0;
+                    continue;
+                }
+
+                let current_sector = inner.get_sector_by_cluster(cluster);
+
+                // 读盘
+                inner
+                    .device
+                    .read_blocks(
+                        current_sector,
+                        inner.bpb.sectors_per_cluster as u64,
+                        &mut cluster_buffer,
+                    )
+                    .await?;
+
+                // 循环各扇区
+                for i in 0..inner.bpb.sectors_per_cluster as usize {
+                    if offset + bytes_per_sector < self.pointer {
+                        offset += bytes_per_sector;
+                        continue;
+                    }
+
+                    // 复制内容
+                    let copy_start = self.pointer - offset;
+                    let copy_length = (bytes_per_sector - copy_start).min(remain);
+                    assert!(
+                        cluster_buffer.len()
+                            >= i as usize * block_size as usize
+                                + copy_start as usize
+                                + copy_length as usize
+                    );
+                    assert!(buf.len() >= write_offset as usize + copy_length as usize);
+                    // Safety: 我们已靠断言保证复制是范围是安全的
+                    unsafe {
+                        copy_nonoverlapping(
+                            buf.as_ptr().add(write_offset as usize),
+                            cluster_buffer
+                                .as_mut_ptr()
+                                .add(i as usize * block_size as usize + copy_start as usize),
+                            copy_length as usize,
+                        );
+                    }
+
+                    // 维护循环不变量
+                    write_offset += copy_length;
+                    offset += bytes_per_sector;
+                    self.pointer += copy_length;
+                    remain -= copy_length;
+
+                    if remain == 0 {
+                        break;
+                    }
+
+                    assert!(offset == self.pointer);
+                }
+
+                // 写盘
+                inner
+                    .device
+                    .write_blocks(
+                        current_sector,
+                        inner.bpb.sectors_per_cluster as u64,
+                        &cluster_buffer,
+                    )
+                    .await?;
+
+                // 下一个簇
+                cluster = inner.get_next_cluster(cluster).await?.0;
+            }
+
+            // 如果仍有剩余空间，说明需要分配新簇
+            while remain > 0 {
+                // 尝试分配新簇
+                let cluster = inner.find_available_cluster().await?;
+                assert!(
+                    cluster != FatEntry::FAT_ENTRY_FREE
+                        && cluster < FatEntry::FAT_ENTRY_RESERVED_START
+                );
+                assert!(
+                    last_cluster != FatEntry::FAT_ENTRY_FREE
+                        && last_cluster < FatEntry::FAT_ENTRY_RESERVED_START
+                );
+                // 挂载新簇
+                inner
+                    .update_cluster(last_cluster, FatEntry(cluster))
+                    .await?;
+                last_cluster = cluster;
+
+                // 准备向新簇中写入内容
+                cluster_buffer.fill(0);
+
+                // 循环各扇区
+                for i in 0..inner.bpb.sectors_per_cluster as usize {
+                    if offset + bytes_per_sector < self.pointer {
+                        offset += bytes_per_sector;
+                        continue;
+                    }
+
+                    // 复制内容
+                    let copy_start = self.pointer - offset;
+                    let copy_length = (bytes_per_sector - copy_start).min(remain);
+                    assert!(
+                        cluster_buffer.len()
+                            >= i as usize * block_size as usize
+                                + copy_start as usize
+                                + copy_length as usize
+                    );
+                    assert!(buf.len() >= write_offset as usize + copy_length as usize);
+                    // Safety: 我们已靠断言保证复制是范围是安全的
+                    unsafe {
+                        copy_nonoverlapping(
+                            buf.as_ptr().add(write_offset as usize),
+                            cluster_buffer
+                                .as_mut_ptr()
+                                .add(i as usize * block_size as usize + copy_start as usize),
+                            copy_length as usize,
+                        );
+                    }
+
+                    // 维护循环不变量
+                    write_offset += copy_length;
+                    offset += bytes_per_sector;
+                    self.pointer += copy_length;
+                    remain -= copy_length;
+
+                    if remain == 0 {
+                        break;
+                    }
+
+                    assert!(offset == self.pointer);
+                }
+
+                // 写盘
+                inner
+                    .device
+                    .write_blocks(
+                        inner.get_sector_by_cluster(cluster),
+                        inner.bpb.sectors_per_cluster as u64,
+                        &cluster_buffer,
+                    )
+                    .await?;
+            }
+
+            // 文件大小维护
+            if self.pointer > file_size {
+                self.metadata.short.file_size = self.pointer as u32;
+                inner.update_file_metadata(&self.metadata).await?;
+            }
+
+            Ok(())
+        })
     }
 }
 
@@ -1986,6 +2234,93 @@ mod test {
             assert!(!file.is_directory);
             assert_eq!(file.size, 0);
             assert_eq!(file.allocated_size, 512 * 8);
+        });
+    }
+
+    #[test]
+    fn test_write_read_file() {
+        run_task(async {
+            let device = Arc::new(MemoryDevice::new(512 * 28, 512));
+            let fs = Fat32FileSystem::with_format(device.clone()).await.unwrap();
+
+            let file_path = PathBuf::from_str("test.txt").unwrap();
+            let content = b"hello world!";
+            let mut buf = [0; 20];
+            fs.create_file(file_path.as_path()).await.unwrap();
+            let mut handle = fs.open_file(file_path.as_path()).await.unwrap();
+            handle.write(content).await.unwrap();
+            handle.move_pointer(0).await.unwrap();
+            let read_count = handle.read(&mut buf).await.unwrap();
+            handle.close().await.unwrap();
+
+            assert_eq!(read_count, content.len() as u64);
+            assert_eq!(&buf[..content.len()], content);
+        });
+    }
+
+    #[test]
+    fn test_write_large_file() {
+        run_task(async {
+            let device = Arc::new(MemoryDevice::new(512 * 28, 512));
+            let fs = Fat32FileSystem::with_format(device.clone()).await.unwrap();
+
+            let file_path = PathBuf::from_str("test.txt").unwrap();
+            let content = &[0x80; 8192]; // 2 cluster
+            let mut buf = [0; 8192];
+            fs.create_file(file_path.as_path()).await.unwrap();
+            let mut handle = fs.open_file(file_path.as_path()).await.unwrap();
+            handle.write(content).await.unwrap();
+            handle.move_pointer(0).await.unwrap();
+            let read_count = handle.read(&mut buf).await.unwrap();
+            handle.close().await.unwrap();
+
+            assert_eq!(read_count, content.len() as u64);
+            assert_eq!(&buf[..content.len()], content);
+        });
+    }
+
+    #[test]
+    fn test_write_close_read_file() {
+        run_task(async {
+            let device = Arc::new(MemoryDevice::new(512 * 28, 512));
+            let fs = Fat32FileSystem::with_format(device.clone()).await.unwrap();
+
+            let file_path = PathBuf::from_str("test.txt").unwrap();
+            let content = b"hello world!";
+            let mut buf = [0; 20];
+            fs.create_file(file_path.as_path()).await.unwrap();
+            let mut handle = fs.open_file(file_path.as_path()).await.unwrap();
+            handle.write(content).await.unwrap();
+            handle.close().await.unwrap();
+            let mut handle = fs.open_file(file_path.as_path()).await.unwrap();
+            let read_count = handle.read(&mut buf).await.unwrap();
+            handle.close().await.unwrap();
+
+            assert_eq!(read_count, content.len() as u64);
+            assert_eq!(&buf[..content.len()], content);
+        });
+    }
+
+    #[test]
+    fn test_write_append_read_file() {
+        run_task(async {
+            let device = Arc::new(MemoryDevice::new(512 * 28, 512));
+            let fs = Fat32FileSystem::with_format(device.clone()).await.unwrap();
+
+            let file_path = PathBuf::from_str("test.txt").unwrap();
+            let content = b"hello world!";
+            let mut buf = [0; 20];
+            let split = content.len() / 2;
+            fs.create_file(file_path.as_path()).await.unwrap();
+            let mut handle = fs.open_file(file_path.as_path()).await.unwrap();
+            handle.write(&content[..split]).await.unwrap();
+            handle.write(&content[split..]).await.unwrap();
+            handle.move_pointer(0).await.unwrap();
+            let read_count = handle.read(&mut buf).await.unwrap();
+            handle.close().await.unwrap();
+
+            assert_eq!(read_count, content.len() as u64);
+            assert_eq!(&buf[..content.len()], content);
         });
     }
 }
