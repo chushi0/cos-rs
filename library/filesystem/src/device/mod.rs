@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 
 use crate::BoxFuture;
 
+pub mod mbr;
 pub mod memory;
 
 /// 块设备的抽象
