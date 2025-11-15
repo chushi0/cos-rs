@@ -14,9 +14,11 @@ use core::{
 };
 
 use alloc::boxed::Box;
+use filesystem::device::BlockDevice;
 
 use crate::{
     bootloader::MemoryRegion,
+    io::disk::ata_lba::AtaLbaDriver,
     multitask::process::ProcessPageType,
     sync::int::{IrqGuard, sti},
 };
@@ -24,6 +26,7 @@ use crate::{
 pub mod bootloader;
 pub mod display;
 pub mod int;
+pub mod io;
 pub mod memory;
 pub mod multitask;
 pub mod sync;
@@ -32,7 +35,7 @@ pub mod sync;
 pub unsafe extern "C" fn kmain(
     memory_region_ptr: *const MemoryRegion,
     memory_region_len: usize,
-    _startup_disk: u32,
+    startup_disk: u32,
 ) -> ! {
     // 初始化VGA文本缓冲，并输出文本
     display::vga_text::init();
@@ -159,6 +162,22 @@ pub unsafe extern "C" fn kmain(
                 enter_user_mode = sym enter_user_mode,
             )
         }
+    });
+
+    multitask::async_rt::spawn(async move {
+        kprintln!("startup disk: {startup_disk}");
+
+        // 读盘
+        let Ok(driver) = AtaLbaDriver::new(startup_disk as u8).await else {
+            kprintln!("failed to new ata lba driver");
+            return;
+        };
+
+        let mut buf = [0u8; 512];
+        if let Err(e) = driver.read_block(0, &mut buf).await {
+            kprintln!("failed to read block: {e:?}");
+        }
+        kprintln!("read buf: {buf:x?}");
     });
 
     // 运行内核异步主任务

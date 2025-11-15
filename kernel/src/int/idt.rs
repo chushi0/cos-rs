@@ -135,6 +135,9 @@ pub(super) unsafe fn init() {
         MAIN_CPU_IDT[hard::INDEX_KEYBOARD].set_function_pointer(hard::keyboard_irq);
         MAIN_CPU_IDT[hard::INDEX_KEYBOARD].disable_interrupt();
         MAIN_CPU_IDT[hard::INDEX_KEYBOARD].enable();
+        MAIN_CPU_IDT[hard::INDEX_IDE1].set_function_pointer(hard::primary_ide_irq);
+        MAIN_CPU_IDT[hard::INDEX_IDE1].disable_interrupt();
+        MAIN_CPU_IDT[hard::INDEX_IDE1].enable();
 
         (&*(&raw const MAIN_CPU_IDT)).load();
     }

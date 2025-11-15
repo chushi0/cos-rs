@@ -15,5 +15,6 @@ panic = "abort"
 strip = "symbols"
 
 [dependencies]
+cos-sys = {path = "../user/library/cos-sys"}
+filesystem = {path = "../library/filesystem"}
 rlibc = "1.0.0"
-cos-sys = { path = "../user/library/cos-sys" }

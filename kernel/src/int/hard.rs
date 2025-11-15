@@ -6,7 +6,7 @@ use core::{
 
 use crate::{
     int::idt::{Idt, StackFrame},
-    interrupt_handler, kprintln, multitask,
+    interrupt_handler, io, kprintln, multitask,
 };
 
 // 定时器 PIT Channel 0
@@ -150,7 +150,7 @@ pub unsafe fn init() {
         asm!(
             "out dx, al",
             in("dx") PIC2_DATA,
-            in("al") 0b11111111u8,
+            in("al") 0b10111111u8,
             options(nostack, preserves_flags)
         );
     }
@@ -241,6 +241,16 @@ interrupt_handler! {
 
         unsafe {
             send_eoi(IRQ_KEYBOARD);
+        }
+    }
+}
+
+interrupt_handler! {
+    fn primary_ide_irq(stack: &mut StackFrame) {
+        kprintln!("primary_ide_irq");
+        io::disk::ata_lba::ata_irq();
+        unsafe {
+            send_eoi(IRQ_IDE1);
         }
     }
 }
