@@ -7,6 +7,9 @@ use crate::{
     device::{BlockDevice, BlockDeviceError},
 };
 
+pub const PARTITION_TYPE_BOOTLOADER: u8 = 0xEB;
+pub const PARTITION_TYPE_FAT32: u8 = 0x0C;
+
 // 分区表偏移
 const MBR_PARTITION_TABLE_OFFSET: usize = 446;
 // 每个条目大小
@@ -32,11 +35,13 @@ pub struct MbrPartitionDevice {
     end: u32,
 }
 
+#[derive(Debug)]
 pub enum MountError {
     IoError(BlockDeviceError),
     BlockSizeNotExpected,
 }
 
+#[derive(Debug)]
 pub enum FormatError {
     IoError(BlockDeviceError),
     BlockSizeNotExpected,
@@ -159,6 +164,8 @@ impl MbrPartitionDevice {
                 end: partition.end,
             });
         }
+
+        block_device.write_block(0, &buf).await?;
 
         Ok(partitions)
     }

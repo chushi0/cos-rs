@@ -1,7 +1,10 @@
 [package]
+edition = "2024"
 name = "filesystem"
 version = "0.1.0"
-edition = "2024"
+
+[features]
+dyn-io-error = []
 
 [dependencies]
-async_locks = { path = "../async_locks" }
+async_locks = {path = "../async_locks"}

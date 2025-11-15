@@ -58,7 +58,7 @@
     mov ax, 0
     mov es, ax              ; 设置段寄存器
     mov ah, 0x02            ; 读磁盘功能
-    mov al, [.loader_size]  ; 扇区数量
+    mov al, [0x7C00+446+12] ; 扇区数量
     test al, al
     jz .load_error          ; 如果扇区数量为0，直接报错
     mov ch, 0               ; 柱面号
@@ -194,7 +194,6 @@
 
     ; 调用loader程序
     mov dword [.mem_struct_addr], 0x1000
-    push dword .project_info
     push dword .bios_info
     call dword 0x8000
 
@@ -290,16 +289,11 @@ dw 0
 .startup_disk:
 db 0
 
-times 510 - 3 - ($ - $$) db 0
+; 保证汇编代码不会溢出到分区表
+times 440 - ($ - $$) db 0xcc
 
-.project_info:
+times 446 - 440 db 0
 
-; 我们的构建程序会将loader程序的扇区数量写在这里
-.loader_size:
-db 0
-
-; 我们的构建程序会将kernel程序的扇区数量写在这里
-.kernel_size:
-dw 0
+times 510 - 446 db 0
 
 db 0x55, 0xaa

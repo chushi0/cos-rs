@@ -25,16 +25,9 @@ pub struct RealBiosInfo {
     startup_disk: u8,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[repr(C, packed)]
-pub struct ProjectInfo {
-    loader_size: u8,
-    kernel_size: u16,
-}
-
 // Safety: CPU已经正确设置GDT、开启A20并进入32位保护模式
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn _start(bios_info: &RealBiosInfo, project_info: &ProjectInfo) -> ! {
+pub unsafe extern "C" fn _start(bios_info: &RealBiosInfo) -> ! {
     // 输出一点东西，表示我们已经进入了loader
     // Safety: 在主要逻辑中，我们仅创建一个VgaText
     let mut vga = unsafe { VgaText::new() };
@@ -67,13 +60,13 @@ pub unsafe extern "C" fn _start(bios_info: &RealBiosInfo, project_info: &Project
     enable_sse();
 
     // 加载内核
-    load_kernel(project_info, bios_info.startup_disk);
+    load_kernel(bios_info.startup_disk);
     writeln!(vga, "finish read kernel").unwrap();
 
     // 启用长模式
     // Safety: 我们已经加载完内核，并判断CPU支持长模式，可以进入长模式
     unsafe {
-        enable_64bit_mode(project_info, memory_region, bios_info.startup_disk);
+        enable_64bit_mode(memory_region, bios_info.startup_disk);
     }
 }
 

@@ -5,7 +5,7 @@ use core::{
     ptr,
 };
 
-use crate::{ProjectInfo, memory::MemoryRegion};
+use crate::memory::MemoryRegion;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(8))]
@@ -90,11 +90,7 @@ pub fn test_cpu_is_support_64bit() -> bool {
 
 // 从保护模式切换到长模式
 // Safety: 调用者需确保当前处于保护模式，无并发，已经关中断，各段寄存器均指向1/2号GDT，已经加载内核
-pub unsafe fn enable_64bit_mode(
-    project_info: &ProjectInfo,
-    memory_region: &[MemoryRegion],
-    startup_disk: u8,
-) -> ! {
+pub unsafe fn enable_64bit_mode(memory_region: &[MemoryRegion], startup_disk: u8) -> ! {
     // 1. 设置64位GDT
     // Safety: 本段代码涉及大量unsafe行为，依次解释其Safety原因：
     //  - 访问全局变量 GDT/GDTR: 由调用者保证不会并发
@@ -145,14 +141,16 @@ pub unsafe fn enable_64bit_mode(
         const SIZE_2M: u64 = 0x20_0000;
         const SIZE_4K: u64 = 0x1000;
 
+        let loader_size = *((0x7C00 + 446 + 12) as *mut u32);
+        let kernel_size = *((0x7C00 + 446 + 12 + 16) as *mut u32);
+
         // loader 程序用页表
         // 0x1000 ~ 0x2000   - 内存检测信息
         // 0x2000 ~ 0x3000   - stub
         // 0x7000 ~ 0x7FFF   - 栈空间（但我们只会用0x7c00之前的）
         // 0x8000 ~ X        - text段、bss段、rodata段
         // 0xb8000 ~ 0xb9000 - VGA 显示
-        let loader_binary_page_count =
-            (project_info.loader_size as u64 * 512 + SIZE_4K - 1) / SIZE_4K;
+        let loader_binary_page_count = (loader_size as u64 * 512 + SIZE_4K - 1) / SIZE_4K;
         assert!(loader_binary_page_count + 7 < 512);
         PML4[0] = &raw const LOADER_PDPT as u64 | P_PRESENT | P_RW;
         LOADER_PDPT[0] = &raw const LOADER_PD as u64 | P_PRESENT | P_RW;
@@ -173,8 +171,7 @@ pub unsafe fn enable_64bit_mode(
         // kernel 程序用页表
         // 0xFFFF_FFFF_FFC0_0000 ~ 0xFFFF_FFFF_FFDF_FFFF - 栈空间（2M）
         // 0xFFFF_FFFF_C000_0000 ~ X                     - text段、bss段、rodata段
-        let kernel_binary_page_count =
-            (project_info.kernel_size as u64 * 512 + SIZE_4K - 1) / SIZE_4K;
+        let kernel_binary_page_count = (kernel_size as u64 * 512 + SIZE_4K - 1) / SIZE_4K;
         assert!(kernel_binary_page_count < 512 * 512);
         let kernel_binary_start = SIZE_2M;
         let kernel_stack_start =

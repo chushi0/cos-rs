@@ -3,14 +3,31 @@
 //! 此crate在宿主机环境上运行，不会打包到产物中，因此此项目无需#![no_std]
 
 use std::{
-    fs::{self, File},
-    io::Write,
+    fs,
     path::PathBuf,
+    pin::pin,
     process::{Command, Stdio},
     str::FromStr,
+    sync::Arc,
+    task::{Context, Poll, Waker},
 };
 
 use clap::Parser;
+use filesystem::{
+    device::{
+        BlockDevice,
+        mbr::{
+            MbrPartitionDevice, MbrPartitionEntry, PARTITION_TYPE_BOOTLOADER, PARTITION_TYPE_FAT32,
+        },
+    },
+    fs::{FileSystem, fat32::Fat32FileSystem},
+};
+
+use crate::adapter::HostFileBlockDevice;
+
+mod adapter;
+
+const KERNEL_DISK_SIZE: u64 = 1024 * 1024 * 10; // 10M
 
 #[derive(clap::Parser)]
 enum BuildArgs {
@@ -190,26 +207,68 @@ fn extract_kernel_binary(debug: bool) {
 }
 
 fn build_image() {
-    let mut boot = fs::read("./build/boot.bin").expect("failed to read ./build/boot.bin");
+    let boot = fs::read("./build/boot.bin").expect("failed to read ./build/boot.bin");
     let mut loader = fs::read("./build/loader.bin").expect("failed to read ./build/loader.bin");
     let mut kernel = fs::read("./build/kernel.bin").expect("failed to read ./build/kernel.bin");
 
     pad_to_fam(&mut loader);
     pad_to_fam(&mut kernel);
 
-    let loader_size = calc_fam_size(loader.len(), u8::MAX as usize) as u8;
-    let kernel_size = calc_fam_size(kernel.len(), u16::MAX as usize) as u16;
-    boot[507] = loader_size;
-    boot[508] = (kernel_size & 0xff) as u8;
-    boot[509] = ((kernel_size & 0xff00) >> 8) as u8;
+    let loader_size = calc_fam_size(loader.len(), u8::MAX as usize);
+    let kernel_size = calc_fam_size(kernel.len(), u16::MAX as usize);
 
-    let mut disk = File::create("./build/disk.img").expect("failed to create ./build/disk.img");
-    disk.write_all(&boot)
-        .expect("failed to write boot to disk.img");
-    disk.write_all(&loader)
-        .expect("failed to write loader to disk.img");
-    disk.write_all(&kernel)
-        .expect("failed to write kernel to disk.img");
+    let disk = HostFileBlockDevice::new("./build/disk.img", KERNEL_DISK_SIZE)
+        .expect("failed to create ./build/disk.img");
+
+    block_on(disk.write_block(0, &boot)).expect("failed to write mbr boot for disk.img");
+
+    let mut mbr = block_on(MbrPartitionDevice::format(
+        disk,
+        [
+            Some(MbrPartitionEntry {
+                bootable: true,
+                start: 1,
+                end: loader_size + 1,
+                partition_type: PARTITION_TYPE_BOOTLOADER,
+            }),
+            Some(MbrPartitionEntry {
+                bootable: false,
+                start: loader_size + 1,
+                end: loader_size + kernel_size + 1,
+                partition_type: PARTITION_TYPE_BOOTLOADER,
+            }),
+            Some(MbrPartitionEntry {
+                bootable: false,
+                start: loader_size + kernel_size + 1,
+                end: (KERNEL_DISK_SIZE / 512) as u32,
+                partition_type: PARTITION_TYPE_FAT32,
+            }),
+            None,
+        ],
+    ))
+    .expect("failed to mbr format disk.img");
+
+    let loader_partition = mbr[0]
+        .take()
+        .expect("codebug: block device should not be none since we format it already (loader)");
+    block_on(loader_partition.write_blocks(0, loader_size as u64, &loader))
+        .expect("failed to write loader partition to disk.img");
+
+    let kernel_partition = mbr[1]
+        .take()
+        .expect("codebug: block device should not be none since we format it already (kernel)");
+    block_on(kernel_partition.write_blocks(0, kernel_size as u64, &kernel))
+        .expect("failed to write kernel partition to disk.img");
+
+    let file_system_partition = mbr[2].take().expect(
+        "codebug: block device should not be none since we format it already (file_system)",
+    );
+    let fs = block_on(Fat32FileSystem::with_format(Arc::new(
+        file_system_partition,
+    )))
+    .expect("failed to format file system for disk.img");
+
+    block_on(fs.unmount()).expect("failed to unmount formatted file system for disk.img");
 }
 
 fn pad_to_fam(binary: &mut Vec<u8>) {
@@ -220,8 +279,20 @@ fn pad_to_fam(binary: &mut Vec<u8>) {
     }
 }
 
-fn calc_fam_size(size: usize, max: usize) -> usize {
+fn calc_fam_size(size: usize, max: usize) -> u32 {
     assert!(size <= max * 512, "code is too large");
 
-    (size + 512 - 1) / 512
+    ((size + 512 - 1) / 512) as u32
+}
+
+fn block_on<F: Future>(f: F) -> F::Output {
+    let waker = Waker::noop();
+    let mut ctx = Context::from_waker(&waker);
+    let mut f = pin!(f);
+    loop {
+        match f.as_mut().poll(&mut ctx) {
+            Poll::Ready(v) => return v,
+            Poll::Pending => {}
+        }
+    }
 }

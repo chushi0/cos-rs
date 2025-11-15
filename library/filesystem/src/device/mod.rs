@@ -153,6 +153,18 @@ pub enum BlockDeviceError {
     OutOfBounds,
     /// 底层IO错误
     IoError,
+    #[cfg(feature = "dyn-io-error")]
+    DynError(Box<dyn core::error::Error + Send + 'static>),
+}
+
+#[cfg(feature = "dyn-io-error")]
+impl<E> From<E> for BlockDeviceError
+where
+    E: core::error::Error + Send + 'static,
+{
+    fn from(value: E) -> Self {
+        Self::DynError(Box::new(value) as Box<_>)
+    }
 }
 
 // 断言BlockDevice是dyn safe的

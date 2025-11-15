@@ -1,11 +1,9 @@
 use core::{arch::asm, hint::spin_loop, ptr::copy_nonoverlapping};
 
-use crate::ProjectInfo;
-
 // 加载内核
-pub fn load_kernel(project_info: &ProjectInfo, disk: u8) {
-    let start_block = project_info.loader_size as u32 + 1;
-    let block_count = project_info.kernel_size as u32;
+pub fn load_kernel(disk: u8) {
+    let start_block = unsafe { *((0x7C00 + 446 + 12) as *mut u32) } + 1;
+    let block_count = unsafe { *((0x7C00 + 446 + 12 + 16) as *mut u32) } as u32;
     let start_ptr = 0x20_0000 as *mut u8; // 2M，对齐Huge Page
 
     for i in 0..block_count {
