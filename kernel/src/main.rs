@@ -14,11 +14,10 @@ use core::{
 };
 
 use alloc::boxed::Box;
-use filesystem::device::BlockDevice;
+use filesystem::path::PathBuf;
 
 use crate::{
     bootloader::MemoryRegion,
-    io::disk::ata_lba::AtaLbaDriver,
     multitask::process::ProcessPageType,
     sync::int::{IrqGuard, sti},
 };
@@ -57,6 +56,23 @@ pub unsafe extern "C" fn kmain(
     multitask::thread::create_kernel_async_thread();
     // 初始化IDLE线程
     multitask::thread::create_idle_thread();
+
+    // 初始化磁盘
+    multitask::async_rt::spawn(async move {
+        if io::disk::init_disk(startup_disk as u8).await.is_err() {
+            kprintln!("failed to init disk");
+        }
+        kprintln!("init disk done");
+    });
+
+    // 测试/模拟代码
+    kernel_test_main();
+
+    // 运行内核异步主任务
+    multitask::async_rt::run()
+}
+
+fn kernel_test_main() {
     // 模拟阻塞线程，若无抢占调度，则一旦进入此线程，则无法再执行其他线程
     unsafe {
         extern "C" fn busy_loop() -> ! {
@@ -163,25 +179,65 @@ pub unsafe extern "C" fn kmain(
             )
         }
     });
-
-    multitask::async_rt::spawn(async move {
-        kprintln!("startup disk: {startup_disk}");
-
-        // 读盘
-        let Ok(driver) = AtaLbaDriver::new(startup_disk as u8).await else {
-            kprintln!("failed to new ata lba driver");
+    // 磁盘测试
+    multitask::async_rt::spawn(async {
+        // 等待1秒，假设磁盘会在这1秒内完成初始化
+        multitask::async_task::sleep(Duration::from_secs(1)).await;
+        // 获取文件系统对象
+        let fs = {
+            let _guard = unsafe { IrqGuard::cli() };
+            io::disk::FILE_SYSTEMS.lock().get(&0).cloned()
+        };
+        let Some(fs) = fs else {
+            kprintln!("filesystem is not mounted");
             return;
         };
-
-        let mut buf = [0u8; 512];
-        if let Err(e) = driver.read_block(0, &mut buf).await {
-            kprintln!("failed to read block: {e:?}");
+        let Ok(path) = PathBuf::from_str("test.txt") else {
+            kprintln!("failed to parse path");
+            return;
+        };
+        // 首先尝试打开文件
+        match fs.open_file(path.as_path()).await {
+            Ok(mut file) => {
+                kprintln!("open file success");
+                let mut buf = [0u8; 20];
+                if let Err(e) = file.read(&mut buf).await {
+                    kprintln!("read file error: {e:?}");
+                } else {
+                    kprintln!("read file success: {buf:?}");
+                }
+                if let Err(e) = file.close().await {
+                    kprintln!("failed to close file: {e:?}");
+                }
+                return;
+            }
+            Err(error) => {
+                kprintln!("open file error: {error:?}");
+                if let Err(e) = fs.create_file(path.as_path()).await {
+                    kprintln!("create file error: {e:?}");
+                    return;
+                }
+                kprintln!("create file success");
+            }
         }
-        kprintln!("read buf: {buf:x?}");
+        // 尝试写文件
+        let mut file = match fs.open_file(path.as_path()).await {
+            Ok(file) => file,
+            Err(error) => {
+                kprintln!("open file error: {error:?}");
+                return;
+            }
+        };
+        kprintln!("opened file to write");
+        const CONTENT: &[u8] = b"hello world";
+        if let Err(e) = file.write(CONTENT).await {
+            kprintln!("failed to write content: {e:?}");
+        }
+        if let Err(e) = file.close().await {
+            kprintln!("failed to close file: {e:?}");
+        }
+        kprintln!("disk test done");
     });
-
-    // 运行内核异步主任务
-    multitask::async_rt::run()
 }
 
 #[panic_handler]

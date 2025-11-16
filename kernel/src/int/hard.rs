@@ -144,7 +144,7 @@ pub unsafe fn init() {
         asm!(
             "out dx, al",
             in("dx") PIC1_DATA,
-            in("al") 0b11111100u8,
+            in("al") 0b11111000u8,
             options(nostack, preserves_flags)
         );
         asm!(
@@ -214,6 +214,7 @@ interrupt_handler! {
         const ELAPSED: u64 = 1_000_000 * 65535 / TIMER_FREQUENCY as u64;
 
         multitask::async_task::tick(ELAPSED);
+        io::disk::ata_lba::ata_irq();
 
         unsafe {
             send_eoi(IRQ_TIMER);
@@ -247,7 +248,6 @@ interrupt_handler! {
 
 interrupt_handler! {
     fn primary_ide_irq(stack: &mut StackFrame) {
-        kprintln!("primary_ide_irq");
         io::disk::ata_lba::ata_irq();
         unsafe {
             send_eoi(IRQ_IDE1);

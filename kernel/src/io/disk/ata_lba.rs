@@ -24,6 +24,7 @@ pub struct AtaLbaDriver {
 }
 
 const ATA_DATA: u16 = 0x1F0;
+const ATA_SECTOR_COUNT: u16 = 0x1F2;
 const ATA_SECTOR: u16 = 0x1F3;
 const ATA_CYL_LO: u16 = 0x1F4;
 const ATA_CYL_HI: u16 = 0x1F5;
@@ -90,7 +91,7 @@ impl BlockDevice for AtaLbaDriver {
 
     fn block_count(&self) -> u64 {
         // TODO: 暂时写死，应当通过IO指令进行查询
-        2048
+        20480
     }
 
     fn write_block<'fut>(
@@ -249,6 +250,7 @@ fn send_io_command(request: &SyncRequest) {
         Operation::Read => send_read_command(&request),
         Operation::Write => send_write_command(&request),
     }
+    io_wait();
 }
 
 fn send_lba(disk: u8, lba: u64) {
@@ -256,7 +258,7 @@ fn send_lba(disk: u8, lba: u64) {
     unsafe {
         asm!(
             "out dx, al",
-            in("dx") ATA_SECTOR,
+            in("dx") ATA_SECTOR_COUNT,
             in("al") 1 as u8,
             options(nostack, preserves_flags),
         );
@@ -298,8 +300,18 @@ fn send_lba(disk: u8, lba: u64) {
     }
 }
 
+fn io_wait() {
+    unsafe {
+        asm!("in al, dx", in("dx") 0x3F6);
+        asm!("in al, dx", in("dx") 0x3F6);
+        asm!("in al, dx", in("dx") 0x3F6);
+        asm!("in al, dx", in("dx") 0x3F6);
+    }
+}
+
 fn send_read_command(request: &Request) {
     send_lba(request.disk, request.lba);
+    io_wait();
     unsafe {
         asm!(
             "out dx, al",
@@ -312,6 +324,7 @@ fn send_read_command(request: &Request) {
 
 fn send_write_command(request: &Request) {
     send_lba(request.disk, request.lba);
+    io_wait();
     unsafe {
         asm!(
             "out dx, al",
@@ -338,15 +351,19 @@ pub fn ata_irq() {
         return;
     }
     // ERR=1，错误
-    let is_error = (status & 1) != 0;
+    let err_reg = (status & 1) != 0;
+    let drq_reg = (status & 0x08) != 0;
+    if !err_reg && !drq_reg {
+        return;
+    }
 
     let _guard = unsafe { IrqGuard::cli() };
     let mut queue = ATA_QUEUE.lock();
     if let Some(request) = queue.0.take() {
         let mut request = request.lock();
 
-        request.error = is_error;
-        if !is_error {
+        request.error = err_reg;
+        if !err_reg {
             match request.operate {
                 Operation::Read => {
                     // PIO方式读取数据
@@ -376,6 +393,7 @@ pub fn ata_irq() {
                 }
             }
         }
+        request.status = Request::STATUS_OK;
         request.waker.wake_by_ref();
     }
     if let Some(next) = queue.1.pop_front() {

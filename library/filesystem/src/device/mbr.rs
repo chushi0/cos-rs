@@ -96,7 +96,7 @@ impl MbrPartitionDevice {
             let Some(end) = start.checked_add(count) else {
                 continue;
             };
-            if start == 0 || start as u64 > block_count || end as u64 > block_count {
+            if start == 0 || start as u64 >= block_count || end as u64 > block_count {
                 continue;
             }
             partitions[i] = Some(Self {

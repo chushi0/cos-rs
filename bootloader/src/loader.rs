@@ -22,6 +22,7 @@ pub fn load_kernel(disk: u8) {
 /// Safety: 不能并发读，必须关中断，硬盘指定位置必须存在
 unsafe fn ata_read_disk(disk: u8, block: u32, ptr: *mut u8) {
     const ATA_DATA: u16 = 0x1F0;
+    const ATA_SECTOR_COUNT: u16 = 0x1F2;
     const ATA_SECTOR: u16 = 0x1F3;
     const ATA_CYL_LO: u16 = 0x1F4;
     const ATA_CYL_HI: u16 = 0x1F5;
@@ -36,7 +37,7 @@ unsafe fn ata_read_disk(disk: u8, block: u32, ptr: *mut u8) {
     unsafe {
         asm!(
             "out dx, al",
-            in("dx") ATA_SECTOR,
+            in("dx") ATA_SECTOR_COUNT,
             in("al") 1 as u8,
             options(nostack, preserves_flags),
         );
@@ -75,6 +76,14 @@ unsafe fn ata_read_disk(disk: u8, block: u32, ptr: *mut u8) {
             in("al") head,
             options(nostack, preserves_flags),
         );
+    }
+
+    // io wait
+    unsafe {
+        asm!("in al, dx", in("dx") 0x3F6);
+        asm!("in al, dx", in("dx") 0x3F6);
+        asm!("in al, dx", in("dx") 0x3F6);
+        asm!("in al, dx", in("dx") 0x3F6);
     }
 
     // 发送命令
