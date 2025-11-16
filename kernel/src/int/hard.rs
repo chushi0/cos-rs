@@ -214,6 +214,8 @@ interrupt_handler! {
         const ELAPSED: u64 = 1_000_000 * 65535 / TIMER_FREQUENCY as u64;
 
         multitask::async_task::tick(ELAPSED);
+
+        // FIXME: 部分场景下硬盘会丢中断，我们在计时器中断这里补充调用
         io::disk::ata_lba::ata_irq();
 
         unsafe {
