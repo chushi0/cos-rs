@@ -91,10 +91,11 @@ pub enum ProcessMemoryError {
 }
 
 /// 向进程空间写入内存
-pub unsafe fn write_user_process_memory<T>(
+pub unsafe fn write_user_process_memory(
     process_id: u64,
     addr: u64,
-    src: &T,
+    src: *const u8,
+    len: usize,
 ) -> Result<(), ProcessMemoryError> {
     let Some(process) = get_process(process_id) else {
         return Err(ProcessMemoryError::ProcessNotFound);
@@ -104,17 +105,35 @@ pub unsafe fn write_user_process_memory<T>(
         process.lock().page_table
     };
     unsafe {
-        memory::physics::write_page_table_memory(page_table.get(), addr, src).map_err(|e| match e {
-            AccessMemoryError::PageFault => ProcessMemoryError::PageFault,
+        memory::physics::write_page_table_memory(page_table.get(), addr, src, len).map_err(|e| {
+            match e {
+                AccessMemoryError::PageFault => ProcessMemoryError::PageFault,
+            }
         })
     }
 }
 
-/// 从进程空间读取内存
-pub unsafe fn read_user_process_memory<T>(
+pub unsafe fn write_user_process_memory_struct<T>(
     process_id: u64,
     addr: u64,
-    dst: &mut T,
+    src: &T,
+) -> Result<(), ProcessMemoryError> {
+    unsafe {
+        write_user_process_memory(
+            process_id,
+            addr,
+            src as *const T as *const u8,
+            size_of::<T>(),
+        )
+    }
+}
+
+/// 从进程空间读取内存
+pub unsafe fn read_user_process_memory(
+    process_id: u64,
+    addr: u64,
+    dst: *mut u8,
+    len: usize,
 ) -> Result<(), ProcessMemoryError> {
     let Some(process) = get_process(process_id) else {
         return Err(ProcessMemoryError::ProcessNotFound);
@@ -124,8 +143,18 @@ pub unsafe fn read_user_process_memory<T>(
         process.lock().page_table
     };
     unsafe {
-        memory::physics::read_page_table_memory(page_table.get(), addr, dst).map_err(|e| match e {
-            AccessMemoryError::PageFault => ProcessMemoryError::PageFault,
+        memory::physics::read_page_table_memory(page_table.get(), addr, dst, len).map_err(|e| {
+            match e {
+                AccessMemoryError::PageFault => ProcessMemoryError::PageFault,
+            }
         })
     }
+}
+
+pub unsafe fn read_user_process_memory_struct<T>(
+    process_id: u64,
+    addr: u64,
+    dst: &mut T,
+) -> Result<(), ProcessMemoryError> {
+    unsafe { read_user_process_memory(process_id, addr, dst as *mut T as *mut u8, size_of::<T>()) }
 }

@@ -138,15 +138,20 @@ fn kernel_test_main() {
             // 0xf4 hlt 特权指令，会立即触发#GP
             // 0xeb 0xfe jmp $-2 会卡在这里
             let code: [u8; _] = [0x90, 0xcc, 0x0f, 0x05, /*0xf4,*/ 0xeb, 0xfe];
-            if multitask::process::write_user_process_memory(process_id, code_page.get(), &code)
-                .is_err()
+            if multitask::process::write_user_process_memory(
+                process_id,
+                code_page.get(),
+                code.as_ptr(),
+                code.len(),
+            )
+            .is_err()
             {
                 kprintln!("write 0xcc code failed");
                 return;
             }
 
             // 写入启动地址
-            if multitask::process::write_user_process_memory(
+            if multitask::process::write_user_process_memory_struct(
                 process_id,
                 stack_page.get() + 0x1000 - 8,
                 &code_page,

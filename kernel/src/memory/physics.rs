@@ -771,14 +771,14 @@ pub enum AccessMemoryError {
 }
 
 /// 根据页表，向指定虚拟地址写入数据
-pub unsafe fn write_page_table_memory<T: Sized>(
+pub unsafe fn write_page_table_memory(
     page_table: u64,
     addr: u64,
-    src: &T,
+    src: *const u8,
+    len: usize,
 ) -> Result<(), AccessMemoryError> {
-    let size = size_of::<T>();
-    let mut src_start = src as *const T as usize;
-    let src_end = src_start + size;
+    let mut src_start = src as usize;
+    let src_end = src_start + len;
     let mut dst_start = addr as usize;
     while src_start < src_end {
         let dst_physical_start = get_page_table_mapped_physical(page_table, dst_start)
@@ -797,14 +797,14 @@ pub unsafe fn write_page_table_memory<T: Sized>(
 }
 
 /// 根据页表，从指定虚拟地址读取数据
-pub unsafe fn read_page_table_memory<T: Sized>(
+pub unsafe fn read_page_table_memory(
     page_table: u64,
     addr: u64,
-    dst: &mut T,
+    dst: *mut u8,
+    len: usize,
 ) -> Result<(), AccessMemoryError> {
-    let size = size_of::<T>();
-    let mut dst_start = dst as *mut T as usize;
-    let dst_end = dst_start + size;
+    let mut dst_start = dst as usize;
+    let dst_end = dst_start + len;
     let mut src_start = addr as usize;
     while dst_start < dst_end {
         let src_physical_start = get_page_table_mapped_physical(page_table, src_start)
