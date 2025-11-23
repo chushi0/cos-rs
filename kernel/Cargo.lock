@@ -15,6 +15,13 @@ name = "cos-sys"
 version = "0.1.0"
 
 [[package]]
+name = "elf"
+version = "0.1.0"
+dependencies = [
+ "async_io",
+]
+
+[[package]]
 name = "filesystem"
 version = "0.1.0"
 dependencies = [
@@ -27,6 +34,7 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "cos-sys",
+ "elf",
  "filesystem",
  "rlibc",
 ]

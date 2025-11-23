@@ -16,5 +16,6 @@ strip = "symbols"
 
 [dependencies]
 cos-sys = {path = "../user/library/cos-sys"}
+elf = {path = "../library/elf"}
 filesystem = {path = "../library/filesystem"}
 rlibc = "1.0.0"

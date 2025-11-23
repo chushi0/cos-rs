@@ -55,7 +55,7 @@ pub trait Loader {
     type LoaderError;
 
     fn alloc_static(
-        &self,
+        &mut self,
         addr: u64,
         size: u64,
         readable: bool,
@@ -64,13 +64,13 @@ pub trait Loader {
     ) -> impl Future<Output = Result<(), Self::LoaderError>> + Send;
 
     fn write_to_memory(
-        &self,
+        &mut self,
         addr: u64,
         data: &[u8],
     ) -> impl Future<Output = Result<(), Self::LoaderError>> + Send;
 
     fn clear_memory(
-        &self,
+        &mut self,
         addr: u64,
         len: u64,
     ) -> impl Future<Output = Result<(), Self::LoaderError>> + Send;
@@ -186,7 +186,7 @@ where
 
     pub async fn load<L: Loader + Send>(
         &mut self,
-        loader: L,
+        loader: &mut L,
     ) -> Result<(), ElfLoadError<Io::ReadError, Io::SeekError, L::LoaderError>> {
         let mut buf = [0u8; 512];
         for program in &self.program {

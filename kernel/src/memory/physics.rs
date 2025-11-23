@@ -318,6 +318,12 @@ pub enum AllocFrameHint {
     UserStack(NonZeroU64),
     /// 用户堆或运行时动态申请
     UserHeap(NonZeroU64),
+    // 用户代码段（固定虚拟地址）
+    StaticUserCode(NonZeroU64, NonZeroU64),
+    // 用户数据段（固定虚拟地址）
+    StaticUserData(NonZeroU64, NonZeroU64),
+    // 用户常量段（固定虚拟地址）
+    StaticUserConst(NonZeroU64, NonZeroU64),
 }
 
 /// 申请页帧，并映射到虚拟地址空间
@@ -338,6 +344,15 @@ pub fn alloc_mapped_frame(size: usize, hint: AllocFrameHint) -> Option<NonNull<u
         AllocFrameHint::UserCode(pml4) => find_user_free_virtual_memory(frame_count, pml4.get())?,
         AllocFrameHint::UserStack(pml4) => find_user_free_virtual_memory(frame_count, pml4.get())?,
         AllocFrameHint::UserHeap(pml4) => find_user_free_virtual_memory(frame_count, pml4.get())?,
+        AllocFrameHint::StaticUserCode(pml4, vaddr) => {
+            find_user_free_virtual_memory_static(frame_count, pml4.get(), vaddr.get())?
+        }
+        AllocFrameHint::StaticUserData(pml4, vaddr) => {
+            find_user_free_virtual_memory_static(frame_count, pml4.get(), vaddr.get())?
+        }
+        AllocFrameHint::StaticUserConst(pml4, vaddr) => {
+            find_user_free_virtual_memory_static(frame_count, pml4.get(), vaddr.get())?
+        }
     };
 
     for i in 0..frame_count {
@@ -375,6 +390,27 @@ pub fn alloc_mapped_frame(size: usize, hint: AllocFrameHint) -> Option<NonNull<u
                 physics_memory.get(),
                 pml4.get(),
                 true,
+                false,
+            ),
+            AllocFrameHint::StaticUserCode(pml4, ..) => write_user_memory_page(
+                virtual_memory_start.get() + i * 0x1000,
+                physics_memory.get(),
+                pml4.get(),
+                false,
+                true,
+            ),
+            AllocFrameHint::StaticUserData(pml4, ..) => write_user_memory_page(
+                virtual_memory_start.get() + i * 0x1000,
+                physics_memory.get(),
+                pml4.get(),
+                true,
+                false,
+            ),
+            AllocFrameHint::StaticUserConst(pml4, ..) => write_user_memory_page(
+                virtual_memory_start.get() + i * 0x1000,
+                physics_memory.get(),
+                pml4.get(),
+                false,
                 false,
             ),
         };
@@ -449,6 +485,24 @@ fn find_user_free_virtual_memory(block: usize, pml4: u64) -> Option<NonZeroUsize
         pml4 as usize as *const PageTable,
         block,
     )
+}
+
+fn find_user_free_virtual_memory_static(
+    block: usize,
+    pml4: u64,
+    vaddr: u64,
+) -> Option<NonZeroUsize> {
+    let page_start = (vaddr & !0xfff) as usize;
+    let pml4 = pml4 as usize as *const PageTable;
+
+    for i in 0..block {
+        let page_free = unsafe { is_page_free(NonZeroUsize::new(page_start + i * 0x1000)?, pml4) };
+        if !page_free {
+            return None;
+        }
+    }
+
+    NonZeroUsize::new(page_start)
 }
 
 fn find_free_virtual_memory(
@@ -791,6 +845,29 @@ pub unsafe fn write_page_table_memory(
 
         dst_start += len;
         src_start += len;
+    }
+
+    Ok(())
+}
+
+pub unsafe fn write_page_table_memory_bytes(
+    page_table: u64,
+    addr: u64,
+    byte: u8,
+    len: usize,
+) -> Result<(), AccessMemoryError> {
+    let mut dst_start = addr as usize;
+    let dst_end = dst_start + len;
+    while dst_start < dst_end {
+        let dst_physical_start = get_page_table_mapped_physical(page_table, dst_start)
+            .ok_or(AccessMemoryError::PageFault)?;
+        let (start, len) = insert_temp_page_table(dst_physical_start.get() as usize);
+        let len = len.min(dst_end - dst_start);
+        unsafe {
+            ptr::write_bytes(start as *mut u8, byte, len);
+        }
+
+        dst_start += len;
     }
 
     Ok(())

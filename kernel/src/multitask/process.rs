@@ -58,6 +58,9 @@ pub enum ProcessPageType {
     Code,
     Stack,
     Data,
+    StaticCode(NonZeroU64),
+    StaticData(NonZeroU64),
+    StaticConst(NonZeroU64),
 }
 
 /// 为进程分配页
@@ -77,6 +80,11 @@ pub fn create_process_page(
             ProcessPageType::Code => AllocFrameHint::UserCode(page_table),
             ProcessPageType::Stack => AllocFrameHint::UserStack(page_table),
             ProcessPageType::Data => AllocFrameHint::UserHeap(page_table),
+            ProcessPageType::StaticCode(vaddr) => AllocFrameHint::StaticUserCode(page_table, vaddr),
+            ProcessPageType::StaticData(vaddr) => AllocFrameHint::StaticUserData(page_table, vaddr),
+            ProcessPageType::StaticConst(vaddr) => {
+                AllocFrameHint::StaticUserConst(page_table, vaddr)
+            }
         },
     )?;
 
@@ -124,6 +132,28 @@ pub unsafe fn write_user_process_memory_struct<T>(
             addr,
             src as *const T as *const u8,
             size_of::<T>(),
+        )
+    }
+}
+
+pub unsafe fn write_user_process_memory_bytes(
+    process_id: u64,
+    addr: u64,
+    byte: u8,
+    len: usize,
+) -> Result<(), ProcessMemoryError> {
+    let Some(process) = get_process(process_id) else {
+        return Err(ProcessMemoryError::ProcessNotFound);
+    };
+    let page_table = {
+        let _guard = IrqGuard::cli();
+        process.lock().page_table
+    };
+    unsafe {
+        memory::physics::write_page_table_memory_bytes(page_table.get(), addr, byte, len).map_err(
+            |e| match e {
+                AccessMemoryError::PageFault => ProcessMemoryError::PageFault,
+            },
         )
     }
 }
