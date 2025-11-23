@@ -11,7 +11,10 @@ use filesystem::{
     device::{BlockDevice, BlockDeviceError},
 };
 
-use crate::sync::{int::IrqGuard, spin::SpinLock};
+use crate::{
+    kprintln,
+    sync::{int::IrqGuard, spin::SpinLock},
+};
 
 /// 全局等待队列
 static ATA_QUEUE: SpinLock<(Option<SyncRequest>, VecDeque<SyncRequest>)> =
@@ -225,6 +228,7 @@ impl Future for ReadBlockFuture<'_> {
 }
 
 fn send_io_command(request: &SyncRequest) {
+    kprintln!("send io command");
     let mut interrupt_enable: u8;
     unsafe {
         asm!(

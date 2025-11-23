@@ -63,6 +63,15 @@ pub unsafe extern "C" fn kmain(
             kprintln!("failed to init disk");
         }
         kprintln!("init disk done");
+
+        // 磁盘初始化完成后，加载第一个用户程序（/system/init）
+        kprintln!("create process...");
+        if multitask::process::create_user_process("/system/init")
+            .await
+            .is_none()
+        {
+            kprintln!("load /system/init failed");
+        }
     });
 
     // 测试/模拟代码
@@ -91,13 +100,13 @@ fn kernel_test_main() {
     multitask::async_rt::spawn(async {
         loop {
             multitask::async_task::sleep(Duration::from_secs(1)).await;
-            kprintln!("time elapsed A");
+            // kprintln!("time elapsed A");
         }
     });
     multitask::async_rt::spawn(async {
         loop {
             multitask::async_task::sleep(Duration::from_secs(3)).await;
-            kprintln!("time elapsed B");
+            // kprintln!("time elapsed B");
         }
     });
     multitask::async_rt::spawn(async {

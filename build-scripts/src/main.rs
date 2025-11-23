@@ -3,7 +3,8 @@
 //! 此crate在宿主机环境上运行，不会打包到产物中，因此此项目无需#![no_std]
 
 use std::{
-    fs,
+    fs::{self, File},
+    io::Read,
     path::PathBuf,
     pin::pin,
     process::{Command, Stdio},
@@ -45,6 +46,8 @@ enum BuildArgs {
     },
 }
 
+const SYSTEM_APPLICATIONS: &[&str] = &["init"];
+
 fn main() {
     let arg = BuildArgs::parse();
 
@@ -61,6 +64,7 @@ fn build(debug: bool) {
     extract_loader_binary();
     compile_kernel(debug);
     extract_kernel_binary(debug);
+    compile_system_application();
     build_image();
 }
 
@@ -146,6 +150,25 @@ fn compile_kernel(debug: bool) {
     let status = child.wait().expect("failed to build kernel");
     if !status.success() {
         panic!("failed to build kernel: cargo exit with non-zero status: {status}")
+    }
+}
+
+fn compile_system_application() {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build").arg("--release");
+    cmd.current_dir(
+        PathBuf::from_str("./user/system")
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
+    );
+    cmd.stdin(Stdio::inherit());
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
+    let mut child = cmd.spawn().expect("failed to build system application");
+    let status = child.wait().expect("failed to build system application");
+    if !status.success() {
+        panic!("failed to build system application: cargo exit with non-zero status: {status}")
     }
 }
 
@@ -267,6 +290,37 @@ fn build_image() {
         file_system_partition,
     )))
     .expect("failed to format file system for disk.img");
+
+    let system_application_dir = filesystem::path::PathBuf::from_str("/system")
+        .expect("codebug: failed to create system application path");
+    block_on(fs.create_directory(system_application_dir.as_path()))
+        .expect("failed to create system application path");
+
+    for system_application in SYSTEM_APPLICATIONS {
+        let mut filepath = system_application_dir.clone();
+        filepath.extends(
+            &filesystem::path::PathBuf::from_str(&system_application)
+                .expect("failed to create system application path"),
+        );
+        block_on(fs.create_file(filepath.as_path())).expect("failed to create file");
+        let mut file = block_on(fs.open_file(filepath.as_path())).expect("failed to open file");
+
+        let mut host_file = File::open(format!(
+            "./user/system/target/x86_64-unknown-cos/release/{system_application}"
+        ))
+        .expect("failed to open host file");
+        let mut buf = [0u8; 8192];
+        loop {
+            let len = host_file
+                .read(&mut buf)
+                .expect("failed to read from host file");
+            if len == 0 {
+                break;
+            }
+            block_on(file.write(&buf[..len])).expect("failed to write to file");
+        }
+        block_on(file.close()).expect("failed to close file");
+    }
 
     block_on(fs.unmount()).expect("failed to unmount formatted file system for disk.img");
 }

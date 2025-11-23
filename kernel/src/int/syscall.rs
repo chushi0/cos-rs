@@ -3,7 +3,7 @@ use core::{
     cmp::Ordering,
 };
 
-use crate::{kprintln, memory, sync::percpu};
+use crate::{kprintln, memory, multitask, sync::percpu};
 
 pub(super) unsafe fn init() {
     const IA32_EFER: u32 = 0xc0000080;
@@ -159,7 +159,7 @@ const SYSCALL_HANDLER: &[SyscallEntry] = &[
     (
         cos_sys::idx::IDX_EXIT,
         cos_sys::idx::IDX_SUB_EXIT_PROCESS,
-        syscall_test,
+        syscall_exit,
     ),
     (
         cos_sys::idx::IDX_EXIT,
@@ -245,10 +245,10 @@ const _: () = {
 };
 
 /// 查询syscall
-/// 
+///
 /// 查询 (id, sub_id) 对应的系统调用编号。
 /// 如果存在，将地址写入ptr。如果不存在，将0写入ptr。
-/// 
+///
 /// Safety:
 /// 调用方保证ptr是一个可以写入的指针
 unsafe extern "C" fn query_syscall_handler(id: u64, sub_id: u64, ptr: *mut u64) {
@@ -307,6 +307,13 @@ macro_rules! syscall_handler {
 syscall_handler! {
     fn syscall_test() {
         kprintln!("syscall test pass");
+    }
+}
+
+syscall_handler! {
+    fn syscall_exit(code: u64) {
+        kprintln!("syscall:exit {code}");
+        multitask::thread::thread_yield(true);
     }
 }
 

@@ -1,12 +1,15 @@
 use core::num::NonZeroU64;
 
-use crate::multitask::{
-    self,
-    process::{ProcessMemoryError, ProcessPageType},
+use crate::{
+    kprintln,
+    multitask::{
+        self,
+        process::{ProcessMemoryError, ProcessPageType},
+    },
 };
 
 pub struct ElfLoader {
-    process_id: u64,
+    pub process_id: u64,
 }
 
 pub enum ElfLoaderError {
@@ -37,6 +40,7 @@ impl elf::Loader for ElfLoader {
         writable: bool,
         executable: bool,
     ) -> Result<(), Self::LoaderError> {
+        kprintln!("alloc static");
         if !readable {
             return Err(ElfLoaderError::PageProtection);
         }
@@ -68,6 +72,7 @@ impl elf::Loader for ElfLoader {
     }
 
     async fn clear_memory(&mut self, addr: u64, len: u64) -> Result<(), Self::LoaderError> {
+        kprintln!("clear memory");
         // 保护内核页
         if addr < 0x0000_0080_0000_0000 || addr.saturating_add(len) >= 0xFFFF_FF80_0000_0000 {
             return Err(ElfLoaderError::PageReserved);
@@ -86,6 +91,7 @@ impl elf::Loader for ElfLoader {
     }
 
     async fn write_to_memory(&mut self, addr: u64, data: &[u8]) -> Result<(), Self::LoaderError> {
+        kprintln!("write to memory");
         // 保护内核页
         if addr < 0x0000_0080_0000_0000
             || addr.saturating_add(data.len() as u64) >= 0xFFFF_FF80_0000_0000

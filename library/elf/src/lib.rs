@@ -11,6 +11,7 @@ pub struct ElfFile<Io> {
     program: Vec<ElfProgram>,
 }
 
+#[derive(Debug)]
 pub struct ElfHeader {
     pub bits: u8,         // 位数
     pub endian: u8,       // 大小端

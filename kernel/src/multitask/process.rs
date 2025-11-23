@@ -1,4 +1,5 @@
 use core::{
+    arch::naked_asm,
     num::NonZeroU64,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -7,12 +8,16 @@ use alloc::{
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     sync::Arc,
 };
+use elf::ElfFile;
+use filesystem::path::PathBuf;
 
 use crate::{
+    int, io, kprintln,
     memory::{
         self,
         physics::{AccessMemoryError, AllocFrameHint},
     },
+    multitask::{self, elf_loader::ElfLoader},
     sync::{int::IrqGuard, spin::SpinLock},
 };
 
@@ -187,4 +192,91 @@ pub unsafe fn read_user_process_memory_struct<T>(
     dst: &mut T,
 ) -> Result<(), ProcessMemoryError> {
     unsafe { read_user_process_memory(process_id, addr, dst as *mut T as *mut u8, size_of::<T>()) }
+}
+
+/// 创建用户进程
+///
+/// 指定可执行文件路径，将加载指定可执行文件到用户空间，然后创建其主线程并运行代码
+///
+/// TODO: 需要优化失败路径的资源回收
+pub async fn create_user_process(exe: &str) -> Option<u64> {
+    // 打开可执行文件
+    kprintln!("opening exe file...");
+    let path = PathBuf::from_str(exe).ok()?;
+    let fs = {
+        let _guard = IrqGuard::cli();
+        io::disk::FILE_SYSTEMS.lock().get(&0).cloned()
+    }?;
+    let mut file = fs.open_file(path.as_path()).await.ok()?;
+
+    // 创建进程
+    kprintln!("create process...");
+    let Some(process) = create_process() else {
+        file.close().await.ok()?;
+        return None;
+    };
+    let process_id = {
+        let _guard = IrqGuard::cli();
+        process.lock().process_id
+    };
+
+    // 加载程序段
+    kprintln!("loading program...");
+    let Ok(mut elf) = ElfFile::from_io(file.as_mut()).await else {
+        file.close().await.ok()?;
+        return None;
+    };
+    kprintln!("parse elf header: {:?}", elf.header());
+    let mut loader = ElfLoader { process_id };
+    if elf.load(&mut loader).await.is_err() {
+        file.close().await.ok()?;
+        return None;
+    }
+    // 入口点
+    kprintln!("close file...");
+    let entry_point = elf.header().entry_point;
+    file.close().await.ok()?;
+
+    // 主线程栈
+    kprintln!("alloc stack page...");
+    let stack_page = create_process_page(process_id, 0x1000, ProcessPageType::Stack)?;
+
+    // 写入启动地址
+    // TODO: 应当写入内核页
+    kprintln!("writing page...");
+    unsafe {
+        if write_user_process_memory_struct(process_id, stack_page.get() + 0x1000 - 8, &entry_point)
+            .is_err()
+        {
+            return None;
+        }
+    }
+
+    // 创建线程
+    kprintln!("creating thread...");
+    unsafe {
+        multitask::thread::create_thread(
+            NonZeroU64::new(process_id),
+            user_thread_entry as u64,
+            stack_page.get() + 0x1000 - 8,
+            false,
+        );
+    }
+
+    kprintln!("all done");
+    Some(process_id)
+}
+
+// 用户线程入口点
+#[unsafe(naked)]
+extern "C" fn user_thread_entry() -> ! {
+    extern "C" fn enter_user_mode(rip: u64, rsp: u64) -> ! {
+        unsafe { int::idt::enter_user_mode(rip, rsp) }
+    }
+    naked_asm!(
+        "mov rdi, [rsp]",
+        "mov rsi, rsp",
+        "jmp {enter_user_mode}",
+        enter_user_mode = sym enter_user_mode,
+    )
 }
