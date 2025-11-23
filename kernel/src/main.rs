@@ -76,9 +76,7 @@ fn kernel_test_main() {
     // 模拟阻塞线程，若无抢占调度，则一旦进入此线程，则无法再执行其他线程
     unsafe {
         extern "C" fn busy_loop() -> ! {
-            unsafe {
-                sti();
-            }
+            sti();
             loop {}
         }
         multitask::thread::create_thread(
@@ -109,7 +107,7 @@ fn kernel_test_main() {
             return;
         };
         let process_id = {
-            let _guard = unsafe { IrqGuard::cli() };
+            let _guard = IrqGuard::cli();
             process.lock().process_id
         };
 
@@ -190,7 +188,7 @@ fn kernel_test_main() {
         multitask::async_task::sleep(Duration::from_secs(1)).await;
         // 获取文件系统对象
         let fs = {
-            let _guard = unsafe { IrqGuard::cli() };
+            let _guard = IrqGuard::cli();
             io::disk::FILE_SYSTEMS.lock().get(&0).cloned()
         };
         let Some(fs) = fs else {

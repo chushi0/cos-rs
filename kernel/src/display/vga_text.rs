@@ -197,7 +197,7 @@ impl Write for VgaTextWriter {
 
 #[doc(hidden)]
 pub fn _kprint(args: Arguments<'_>) {
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     let mut writer = WRITER.lock();
     writer
         .as_mut()

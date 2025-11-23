@@ -741,7 +741,7 @@ unsafe fn remove_kernel_memory_page(virtual_memory: usize) {
 /// 注意：返回的是物理地址，不是虚拟地址。这个地址是未映射的
 pub fn alloc_user_page_table() -> Option<NonZeroU64> {
     let addr = {
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         FRAME_ALLOCATOR.lock().alloc_frame()?
     };
 
@@ -756,7 +756,7 @@ pub fn alloc_user_page_table() -> Option<NonZeroU64> {
 
 /// 释放用户态页表
 pub unsafe fn release_user_page_table(addr: NonZeroU64) {
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     // 由于页表并未映射，我们仅需要将此内存归还物理页分配器
     // TODO: 递归检查内部页表，确保已释放所有内存！
     unsafe {

@@ -126,7 +126,7 @@ pub unsafe fn create_thread(
     };
     let thread = Arc::new(SpinLock::new(thread));
 
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
 
     THREADS.lock().insert(thread_id, thread.clone());
     if !initial_suspend {
@@ -140,9 +140,7 @@ pub unsafe fn create_thread(
 pub fn create_idle_thread() {
     extern "C" fn idle_thread_entry() -> ! {
         loop {
-            unsafe {
-                sti();
-            }
+            sti();
             try_yield_thread();
             unsafe {
                 asm!("hlt");
@@ -167,7 +165,7 @@ pub fn create_idle_thread() {
     };
     let thread = Arc::new(SpinLock::new(thread));
 
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     THREADS.lock().insert(thread_id, thread.clone());
     sync::percpu::set_idle_thread_id(thread_id);
 }
@@ -188,7 +186,7 @@ pub fn create_kernel_async_thread() {
     };
     let thread = Arc::new(SpinLock::new(thread));
 
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     THREADS.lock().insert(thread_id, thread.clone());
     sync::percpu::set_current_thread_id(thread_id);
     sync::percpu::set_kernel_async_thread_id(thread_id);
@@ -204,13 +202,13 @@ pub fn wake_kernel_thread() {
 /// 若目标线程为挂起状态，则切换为Ready状态并加入就绪队列。否则不执行任何操作
 pub fn wake_thread(thread_id: u64) {
     let Some(thread) = ({
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         THREADS.lock().get(&thread_id).cloned()
     }) else {
         return;
     };
 
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     let mut thread_lock = thread.lock();
     let status = thread_lock.status;
     if matches!(status, ThreadStatus::Suspend) {
@@ -223,7 +221,7 @@ pub fn wake_thread(thread_id: u64) {
 /// 获取当前正在执行的线程
 pub fn current_thread() -> Option<Arc<SpinLock<Thread>>> {
     let thread_id = sync::percpu::get_current_thread_id();
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     THREADS.lock().get(&thread_id).cloned()
 }
 
@@ -428,7 +426,7 @@ fn destroy_thread(thread: Arc<SpinLock<Thread>>) {
 pub fn thread_yield(suspend: bool) {
     let current_thread = Arc::into_raw(current_thread().unwrap());
     let mut next_thread = {
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         loop {
             let mut queue = READY_THREADS.lock();
             let Some(thread) = queue.pop_front() else {
@@ -447,7 +445,7 @@ pub fn thread_yield(suspend: bool) {
     // 如果当前线程预期要被挂起，且已无线程可执行，则进入中断线程
     if suspend && next_thread.is_none() {
         let idle_thread_id = sync::percpu::get_idle_thread_id();
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         next_thread = THREADS.lock().get(&idle_thread_id).cloned();
     }
 
@@ -456,7 +454,7 @@ pub fn thread_yield(suspend: bool) {
         let next_thread = Arc::into_raw(next_thread);
         // 我们在此处关闭中断，确保切换线程时不会被中断打断
         // 线程返回后，会重新开启中断
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         unsafe {
             switch_thread(current_thread, next_thread, suspend);
         }
@@ -466,7 +464,7 @@ pub fn thread_yield(suspend: bool) {
 /// 如果有ready状态的线程，则进行线程切换。此函数由IDLE线程调用
 fn try_yield_thread() {
     let next_thread = {
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         loop {
             let mut queue = READY_THREADS.lock();
             let Some(thread) = queue.pop_front() else {
@@ -485,7 +483,7 @@ fn try_yield_thread() {
     if let Some(thread) = next_thread {
         let current_thread = current_thread().unwrap();
 
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         unsafe {
             switch_thread(Arc::into_raw(current_thread), Arc::into_raw(thread), false);
         }

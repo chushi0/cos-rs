@@ -60,7 +60,7 @@ interrupt_handler! {
 interrupt_handler! {
     #[with_error_code]
     fn general_protection(stack: &mut StackFrameWithErrorCode) {
-        unsafe { crate::sync::int::cli(); }
+        crate::sync::int::cli();
         kprintln!("general protection: {stack:x?}");
         loop_hlt();
     }

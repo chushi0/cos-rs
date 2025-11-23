@@ -78,7 +78,7 @@ impl Future for Sleep {
                     waker: cx.waker().clone(),
                 };
 
-                let _guard = unsafe { IrqGuard::cli() };
+                let _guard = IrqGuard::cli();
                 let mut queue = SLEEP_WAKE_QUEUE.lock();
                 queue.push(wake);
 

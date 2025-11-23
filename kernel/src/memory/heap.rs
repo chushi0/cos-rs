@@ -185,12 +185,12 @@ struct GlobalAllocator;
 
 unsafe impl GlobalAlloc for GlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         KERNEL_HEAP.lock().allocate(layout)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         unsafe {
             KERNEL_HEAP
                 .lock()

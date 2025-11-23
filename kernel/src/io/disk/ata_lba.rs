@@ -127,7 +127,7 @@ impl Future for WriteBlockFuture<'_> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.requset.as_ref() {
             Some(request) => {
-                let _guard = unsafe { IrqGuard::cli() };
+                let _guard = IrqGuard::cli();
                 let request = request.lock();
                 if request.status != Request::STATUS_OK {
                     return Poll::Pending;
@@ -156,7 +156,7 @@ impl Future for WriteBlockFuture<'_> {
                 let request = Arc::new(SpinLock::new(request));
                 self.as_mut().requset = Some(request.clone());
 
-                let _guard = unsafe { IrqGuard::cli() };
+                let _guard = IrqGuard::cli();
                 let mut queue = ATA_QUEUE.lock();
                 if queue.0.is_some() {
                     queue.1.push_back(request);
@@ -177,7 +177,7 @@ impl Future for ReadBlockFuture<'_> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.requset.clone() {
             Some(request) => {
-                let _guard = unsafe { IrqGuard::cli() };
+                let _guard = IrqGuard::cli();
                 let request = request.lock();
                 if request.status != Request::STATUS_OK {
                     return Poll::Pending;
@@ -209,7 +209,7 @@ impl Future for ReadBlockFuture<'_> {
                 let request = Arc::new(SpinLock::new(request));
                 self.as_mut().requset = Some(request.clone());
 
-                let _guard = unsafe { IrqGuard::cli() };
+                let _guard = IrqGuard::cli();
                 let mut queue = ATA_QUEUE.lock();
                 if queue.0.is_some() {
                     queue.1.push_back(request);
@@ -244,7 +244,7 @@ fn send_io_command(request: &SyncRequest) {
         );
     }
 
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     let request = request.lock();
     match request.operate {
         Operation::Read => send_read_command(&request),
@@ -357,7 +357,7 @@ pub fn ata_irq() {
         return;
     }
 
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     let mut queue = ATA_QUEUE.lock();
     if let Some(request) = queue.0.take() {
         let mut request = request.lock();

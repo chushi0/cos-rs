@@ -138,13 +138,11 @@ impl WakerInner {
 /// 该函数将不断地获取异步任务并执行。当所有任务均执行完毕后，会执行 hlt 并等待中断
 pub fn run() -> ! {
     // 开中断，异步任务需要中断驱动
-    unsafe {
-        sti();
-    }
+    sti();
     loop {
         // 获取一个任务
         let task = {
-            let _guard = unsafe { IrqGuard::cli() };
+            let _guard = IrqGuard::cli();
             let mut rt = RUNTIME.lock();
             rt.ready.pop_front()
         };
@@ -164,7 +162,7 @@ pub fn run() -> ! {
             // 如果未完成，则重新放入队列中
             if result.is_pending() {
                 let task_id = unsafe { (*task.get()).task_id };
-                let _guard = unsafe { IrqGuard::cli() };
+                let _guard = IrqGuard::cli();
                 let mut rt = RUNTIME.lock();
                 // 如果状态为就绪，放入就绪队列，否则放入等待队列
                 let status = unsafe { (*task.get()).status.load(Ordering::Acquire) };
@@ -214,7 +212,7 @@ where
     // （WakerInner在drop时会释放Arc）
     _ = Arc::into_raw(waker_inner);
 
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     let mut rt = RUNTIME.lock();
     // 加入到异步队列
     unsafe {

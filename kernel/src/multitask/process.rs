@@ -42,7 +42,7 @@ pub fn create_process() -> Option<Arc<SpinLock<Process>>> {
     };
     let process = Arc::new(SpinLock::new(process));
 
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     PROCESSES.lock().insert(process_id, process.clone());
 
     Some(process)
@@ -50,7 +50,7 @@ pub fn create_process() -> Option<Arc<SpinLock<Process>>> {
 
 /// 根据id获取进程
 pub fn get_process(id: u64) -> Option<Arc<SpinLock<Process>>> {
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     PROCESSES.lock().get(&id).cloned()
 }
 
@@ -69,7 +69,7 @@ pub fn create_process_page(
     page_type: ProcessPageType,
 ) -> Option<NonZeroU64> {
     let process = get_process(process_id)?;
-    let _guard = unsafe { IrqGuard::cli() };
+    let _guard = IrqGuard::cli();
     let page_table = process.lock().page_table;
     let virtual_ptr = memory::physics::alloc_mapped_frame(
         size,
@@ -101,7 +101,7 @@ pub unsafe fn write_user_process_memory(
         return Err(ProcessMemoryError::ProcessNotFound);
     };
     let page_table = {
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         process.lock().page_table
     };
     unsafe {
@@ -139,7 +139,7 @@ pub unsafe fn read_user_process_memory(
         return Err(ProcessMemoryError::ProcessNotFound);
     };
     let page_table = {
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         process.lock().page_table
     };
     unsafe {

@@ -36,7 +36,7 @@ pub async fn init_disk(startup_disk: u8) -> Result<(), InitDiskError> {
             .await
             .map_err(|_| InitDiskError)?;
 
-        let _guard = unsafe { IrqGuard::cli() };
+        let _guard = IrqGuard::cli();
         FILE_SYSTEMS.lock().insert(0, Arc::new(fs));
     }
 
