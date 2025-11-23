@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "async_io"
+version = "0.1.0"
+
+[[package]]
 name = "async_locks"
 version = "0.1.0"
 
@@ -14,6 +18,7 @@ version = "0.1.0"
 name = "filesystem"
 version = "0.1.0"
 dependencies = [
+ "async_io",
  "async_locks",
 ]
 

@@ -4,4 +4,4 @@ name = "elf"
 version = "0.1.0"
 
 [dependencies]
-async-io = {path = "../async-io"}
+async_io = {path = "../async_io"}

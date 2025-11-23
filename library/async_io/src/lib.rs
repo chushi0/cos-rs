@@ -1,16 +1,16 @@
+#![no_std]
+
 pub trait AsyncRead {
     type ReadError;
 
-    fn read(
-        &mut self,
-        buf: &mut [u8],
-    ) -> impl Future<Output = Result<usize, Self::ReadError>> + Send;
+    fn read(&mut self, buf: &mut [u8])
+    -> impl Future<Output = Result<u64, Self::ReadError>> + Send;
 }
 
 pub trait Seekable {
     type SeekError;
 
-    fn seek(&mut self, cursor: usize) -> impl Future<Output = Result<(), Self::SeekError>> + Send;
+    fn seek(&mut self, cursor: u64) -> impl Future<Output = Result<(), Self::SeekError>> + Send;
 }
 
 pub enum ReadExactError<E> {
@@ -44,7 +44,7 @@ where
             if c == 0 {
                 return Err(ReadExactError::EOF);
             }
-            buf = &mut buf[c..];
+            buf = &mut buf[c as usize..];
         }
         Ok(())
     }

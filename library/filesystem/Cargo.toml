@@ -7,4 +7,5 @@ version = "0.1.0"
 dyn-io-error = []
 
 [dependencies]
+async_io = {path = "../async_io"}
 async_locks = {path = "../async_locks"}

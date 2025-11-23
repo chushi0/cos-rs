@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "async-io"
+name = "async_io"
 version = "0.1.0"
 
 [[package]]
@@ -14,12 +14,13 @@ version = "0.1.0"
 name = "elf"
 version = "0.1.0"
 dependencies = [
- "async-io",
+ "async_io",
 ]
 
 [[package]]
 name = "filesystem"
 version = "0.1.0"
 dependencies = [
+ "async_io",
  "async_locks",
 ]

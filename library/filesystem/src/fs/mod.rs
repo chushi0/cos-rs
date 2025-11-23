@@ -1,4 +1,5 @@
 use alloc::{boxed::Box, string::String, vec::Vec};
+use async_io::{AsyncRead, Seekable};
 
 use crate::{BoxFuture, device::BlockDeviceError, path::Path};
 
@@ -210,3 +211,19 @@ pub struct FileMetadata {
 
 // 断言FileSystem是dyn safe的
 const _: fn(&dyn FileSystem) -> &dyn FileSystem = |x| x;
+
+impl AsyncRead for Box<dyn FileHandle> {
+    type ReadError = FileSystemError;
+
+    async fn read(&mut self, buf: &mut [u8]) -> Result<u64, Self::ReadError> {
+        FileHandle::read(self.as_mut(), buf).await
+    }
+}
+
+impl Seekable for Box<dyn FileHandle> {
+    type SeekError = FileSystemError;
+
+    async fn seek(&mut self, cursor: u64) -> Result<(), Self::SeekError> {
+        FileHandle::move_pointer(self.as_mut(), cursor).await
+    }
+}
