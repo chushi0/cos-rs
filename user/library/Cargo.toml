@@ -1,0 +1,3 @@
+[workspace]
+members = ["cos-sys", "libc"]
+resolver = "2"
