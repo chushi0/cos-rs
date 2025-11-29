@@ -6,21 +6,9 @@
 extern crate alloc;
 extern crate rlibc;
 
-use core::{
-    arch::{asm, naked_asm},
-    num::NonZeroU64,
-    slice,
-    time::Duration,
-};
+use core::{arch::asm, slice};
 
-use alloc::boxed::Box;
-use filesystem::path::PathBuf;
-
-use crate::{
-    bootloader::MemoryRegion,
-    multitask::process::ProcessPageType,
-    sync::int::{IrqGuard, sti},
-};
+use crate::bootloader::MemoryRegion;
 
 pub mod bootloader;
 pub mod display;
@@ -62,10 +50,8 @@ pub unsafe extern "C" fn kmain(
         if io::disk::init_disk(startup_disk as u8).await.is_err() {
             kprintln!("failed to init disk");
         }
-        kprintln!("init disk done");
 
         // 磁盘初始化完成后，加载第一个用户程序（/system/init）
-        kprintln!("create /system/init process...");
         if multitask::process::create_user_process("/system/init")
             .await
             .is_none()
@@ -74,182 +60,8 @@ pub unsafe extern "C" fn kmain(
         }
     });
 
-    // 测试/模拟代码
-    // kernel_test_main();
-
     // 运行内核异步主任务
     multitask::async_rt::run()
-}
-
-fn kernel_test_main() {
-    // 模拟阻塞线程，若无抢占调度，则一旦进入此线程，则无法再执行其他线程
-    unsafe {
-        extern "C" fn busy_loop() -> ! {
-            sti();
-            loop {}
-        }
-        multitask::thread::create_thread(
-            None,
-            busy_loop as usize as u64,
-            Box::leak(Box::new([0u8; 4096])) as *mut u8 as usize as u64 + 4096 - 8,
-            false,
-        );
-    }
-
-    // 创建一个任务进行测试
-    multitask::async_rt::spawn(async {
-        loop {
-            multitask::async_task::sleep(Duration::from_secs(1)).await;
-            // kprintln!("time elapsed A");
-        }
-    });
-    multitask::async_rt::spawn(async {
-        loop {
-            multitask::async_task::sleep(Duration::from_secs(3)).await;
-            // kprintln!("time elapsed B");
-        }
-    });
-    multitask::async_rt::spawn(async {
-        // 模拟一个用户线程
-        let Some(process) = multitask::process::create_process() else {
-            kprintln!("create process failed");
-            return;
-        };
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            process.lock().process_id
-        };
-
-        // 创建页表
-        let Some(code_page) =
-            multitask::process::create_process_page(process_id, 0x1000, ProcessPageType::Code)
-        else {
-            kprintln!("create process code page failed");
-            return;
-        };
-        kprintln!("code page: {code_page:x}");
-
-        let Some(stack_page) =
-            multitask::process::create_process_page(process_id, 0x1000, ProcessPageType::Stack)
-        else {
-            kprintln!("create process stack page failed");
-            return;
-        };
-        kprintln!("stack page: {stack_page:x}");
-
-        unsafe {
-            // 写入代码
-            // 0x90 nop
-            // 0xcc int 3
-            // 0x0f 0x05 syscall
-            // 0xf4 hlt 特权指令，会立即触发#GP
-            // 0xeb 0xfe jmp $-2 会卡在这里
-            let code: [u8; _] = [0x90, 0xcc, 0x0f, 0x05, /*0xf4,*/ 0xeb, 0xfe];
-            if multitask::process::write_user_process_memory(
-                process_id,
-                code_page.get(),
-                code.as_ptr(),
-                code.len(),
-            )
-            .is_err()
-            {
-                kprintln!("write 0xcc code failed");
-                return;
-            }
-
-            // 写入启动地址
-            if multitask::process::write_user_process_memory_struct(
-                process_id,
-                stack_page.get() + 0x1000 - 8,
-                &code_page,
-            )
-            .is_err()
-            {
-                kprintln!("write &code_page stack failed");
-                return;
-            }
-
-            // 创建线程
-            multitask::thread::create_thread(
-                NonZeroU64::new(process_id),
-                user_thread_entry as u64,
-                stack_page.get() + 0x1000 - 8,
-                false,
-            );
-        }
-
-        #[unsafe(naked)]
-        extern "C" fn user_thread_entry() -> ! {
-            extern "C" fn enter_user_mode(rip: u64, rsp: u64) -> ! {
-                unsafe { int::idt::enter_user_mode(rip, rsp) }
-            }
-            naked_asm!(
-                "mov rdi, [rsp]",
-                "mov rsi, rsp",
-                "jmp {enter_user_mode}",
-                enter_user_mode = sym enter_user_mode,
-            )
-        }
-    });
-    // 磁盘测试
-    multitask::async_rt::spawn(async {
-        // 等待1秒，假设磁盘会在这1秒内完成初始化
-        multitask::async_task::sleep(Duration::from_secs(1)).await;
-        // 获取文件系统对象
-        let fs = {
-            let _guard = IrqGuard::cli();
-            io::disk::FILE_SYSTEMS.lock().get(&0).cloned()
-        };
-        let Some(fs) = fs else {
-            kprintln!("filesystem is not mounted");
-            return;
-        };
-        let Ok(path) = PathBuf::from_str("test.txt") else {
-            kprintln!("failed to parse path");
-            return;
-        };
-        // 首先尝试打开文件
-        match fs.open_file(path.as_path()).await {
-            Ok(mut file) => {
-                kprintln!("open file success");
-                let mut buf = [0u8; 20];
-                if let Err(e) = file.read(&mut buf).await {
-                    kprintln!("read file error: {e:?}");
-                } else {
-                    kprintln!("read file success: {buf:?}");
-                }
-                if let Err(e) = file.close().await {
-                    kprintln!("failed to close file: {e:?}");
-                }
-                return;
-            }
-            Err(error) => {
-                kprintln!("open file error: {error:?}");
-                if let Err(e) = fs.create_file(path.as_path()).await {
-                    kprintln!("create file error: {e:?}");
-                    return;
-                }
-                kprintln!("create file success");
-            }
-        }
-        // 尝试写文件
-        let mut file = match fs.open_file(path.as_path()).await {
-            Ok(file) => file,
-            Err(error) => {
-                kprintln!("open file error: {error:?}");
-                return;
-            }
-        };
-        kprintln!("opened file to write");
-        const CONTENT: &[u8] = b"hello world";
-        if let Err(e) = file.write(CONTENT).await {
-            kprintln!("failed to write content: {e:?}");
-        }
-        if let Err(e) = file.close().await {
-            kprintln!("failed to close file: {e:?}");
-        }
-        kprintln!("disk test done");
-    });
 }
 
 #[panic_handler]

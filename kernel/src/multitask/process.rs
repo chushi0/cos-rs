@@ -12,7 +12,7 @@ use elf::ElfFile;
 use filesystem::path::PathBuf;
 
 use crate::{
-    int, io, kprintln,
+    int, io,
     memory::{
         self,
         physics::{AccessMemoryError, AllocFrameHint},
@@ -201,7 +201,6 @@ pub unsafe fn read_user_process_memory_struct<T>(
 /// TODO: 需要优化失败路径的资源回收
 pub async fn create_user_process(exe: &str) -> Option<u64> {
     // 打开可执行文件
-    kprintln!("opening exe file...");
     let path = PathBuf::from_str(exe).ok()?;
     let fs = {
         let _guard = IrqGuard::cli();
@@ -210,7 +209,6 @@ pub async fn create_user_process(exe: &str) -> Option<u64> {
     let mut file = fs.open_file(path.as_path()).await.ok()?;
 
     // 创建进程
-    kprintln!("create process...");
     let Some(process) = create_process() else {
         file.close().await.ok()?;
         return None;
@@ -221,29 +219,24 @@ pub async fn create_user_process(exe: &str) -> Option<u64> {
     };
 
     // 加载程序段
-    kprintln!("loading program...");
     let Ok(mut elf) = ElfFile::from_io(file.as_mut()).await else {
         file.close().await.ok()?;
         return None;
     };
-    kprintln!("parse elf header: {:?}", elf.header());
     let mut loader = ElfLoader { process_id };
     if elf.load(&mut loader).await.is_err() {
         file.close().await.ok()?;
         return None;
     }
     // 入口点
-    kprintln!("close file...");
     let entry_point = elf.header().entry_point;
     file.close().await.ok()?;
 
     // 主线程栈
-    kprintln!("alloc stack page...");
     let stack_page = create_process_page(process_id, 0x1000, ProcessPageType::Stack)?;
 
     // 写入启动地址
     // TODO: 应当写入内核页
-    kprintln!("writing page...");
     unsafe {
         if write_user_process_memory_struct(process_id, stack_page.get() + 0x1000 - 8, &entry_point)
             .is_err()
@@ -253,7 +246,6 @@ pub async fn create_user_process(exe: &str) -> Option<u64> {
     }
 
     // 创建线程
-    kprintln!("creating thread...");
     unsafe {
         multitask::thread::create_thread(
             NonZeroU64::new(process_id),
@@ -263,7 +255,6 @@ pub async fn create_user_process(exe: &str) -> Option<u64> {
         );
     }
 
-    kprintln!("all done");
     Some(process_id)
 }
 
