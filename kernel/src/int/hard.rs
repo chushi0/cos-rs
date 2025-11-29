@@ -216,7 +216,7 @@ interrupt_handler! {
         multitask::async_task::tick(ELAPSED);
 
         // FIXME: 部分场景下硬盘会丢中断，我们在计时器中断这里补充调用
-        io::disk::ata_lba::ata_irq();
+        // io::disk::ata_lba::ata_irq();
 
         unsafe {
             send_eoi(IRQ_TIMER);

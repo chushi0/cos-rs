@@ -2,7 +2,7 @@ use core::{
     arch::{asm, naked_asm},
     mem::MaybeUninit,
     num::NonZeroU64,
-    ptr,
+    ptr::{self, null_mut},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -267,12 +267,18 @@ unsafe fn switch_to_context(context: *const Context) -> ! {
 ///
 /// 注意：
 /// 输入的from指针和to指针均为Arc::into_raw的指针！
-unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Thread>, suspend: bool) {
+unsafe fn switch_thread(
+    from: *const SpinLock<Thread>,
+    to: *const SpinLock<Thread>,
+    suspend: bool,
+    on_yield: Yield,
+) {
     // 旧线程逻辑处理
     unsafe extern "C" fn deal_old_thread(
         ctx: *const Context,
         thread: *const SpinLock<Thread>,
         suspend: bool,
+        on_yield: *const Yield,
     ) {
         unsafe {
             let thread = Arc::from_raw(thread);
@@ -306,6 +312,8 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
                     }
                 }
             }
+
+            (*on_yield).call()
         }
     }
 
@@ -364,9 +372,9 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
             "push rdi",
             "push rsi",
             // 压入上下文，调用其他函数进行复制，避免在汇编中手写偏移
-            "mov rcx, [rsp+16]",
-            "add rcx, 8",
-            "push rcx", // rsp
+            "mov r11, [rsp+16]",
+            "add r11, 8",
+            "push r11", // rsp
             "push rax", // rip
             "push rbx",
             "push rbp",
@@ -395,12 +403,25 @@ unsafe fn switch_thread(from: *const SpinLock<Thread>, to: *const SpinLock<Threa
             in("rdi") from,
             in("rsi") to,
             in("rdx") suspend as u64,
+            in("rcx") &raw const on_yield,
             switch_thread_internal = sym switch_thread_internal,
+            lateout("rax") _,
+            lateout("rcx") _,
+            lateout("rdx") _,
+            lateout("rsi") _,
+            lateout("rdi") _,
+            lateout("r8") _,
+            lateout("r9") _,
+            lateout("r10") _,
+            lateout("r11") _,
         )
     }
 
-    // TODO: 是否应该在这里再次检查线程是否真的处于Running状态？
+    // 是否应该在这里再次检查线程是否真的处于Running状态？
     // 比如，是否无意中唤醒了suspend状态或terminated状态的线程？
+    // 结论：不需要。
+    // 如果在单CPU上，由于我们已经关中断，此时其他线程无法挂起当前线程，所以当前线程必然处于READY状态
+    // 如果在多CPU上，我们必然通过IPI中断提醒当前CPU此线程已经结束，我们会在关中断时立刻收到中断，此时再结束线程即可
 
     // 切换线程后，我们检查是否有线程需要清理资源
     loop {
@@ -422,8 +443,101 @@ fn destroy_thread(thread: Arc<SpinLock<Thread>>) {
     THREADS.lock().remove(&thread_id);
 }
 
+/// 在让出线程后，再执行此函数
+/// 如果线程未让出，则不会执行此函数
+///
+/// 此结构体便于实现类似条件变量的逻辑。条件变量需要挂起当前线程，但挂起同时释放线程。
+/// 此时可能会出现这种代码：
+///
+/// ```rust, norun
+/// struct CondVar<'a, T> {
+///     mutex: &'a, Mutex<T>,
+///     queue: SpinLock<Vec<u64>>,
+/// }
+///
+/// impl<'a, T> CondVar<'a, T> {
+///     fn wait(&self, guard: MutexGuard<'_, T>) -> MutexGuard<'a, T> {
+///         drop(guard);
+///         queue.lock().push(current_thread());
+///         thread_yield(true); // <-- NOTICE HERE
+///         self.mutex().lock()
+///     }
+/// }
+/// ```
+///
+/// 注意代码中标记的位置。在并发时，其他线程可能在`thread_yield(true)`这行代码之前，抢先把队列中的线程id移出，
+/// 然后唤醒当前线程，但此时当前线程仍然为READY状态。而后当前线程再执行`thread_yield(true)`，那么当前线程将被挂起，
+/// 且永远不会再被唤醒。
+///
+/// 借助[Yield]结构体，你可以改写为以下代码：
+///
+/// ```rust, norun
+/// struct CondVar<'a, T> {
+///     mutex: &'a, Mutex<T>,
+///     queue: SpinLock<Vec<u64>>,
+/// }
+///
+/// impl<'a, T> CondVar<'a, T> {
+///     fn wait(&self, guard: MutexGuard<'_, T>) -> MutexGuard<'a, T> {
+///         struct YieldContext<'b, T> {
+///             guard: MutexGuard<'b, T>,
+///             thread: u64,
+///         }
+///
+///         let mut context = Some(YieldContext { guard, thread: current_thread() });
+///         unsafe fn on_yield(context: *mut ()) {
+///             unsafe {
+///                 let context = context as *mut Option<YieldContext>;
+///                 if let Some(context) = (*context).take() {
+///                     queue.lock().push(context.thread);
+///                 }
+///             }
+///         }
+///
+///         queue.lock().push(current_thread());
+///         thread_yield_with(Yield { context: &raw mut context as *mut (), vtable: on_yield });
+///         self.mutex().lock()
+///     }
+/// }
+/// ```
+///
+/// 这样修改后，代码便有了以下保证：
+/// 1. vtable函数将被在当前线程彻底换出后（线程被标记为suspend后）才会执行，在此之前，其他线程不会持锁
+/// 2. 当其他线程调用notify时，如果发现队列中有排队的线程，那么这个线程不会处于READY状态，可以将其唤醒
+/// 3. 即便在vtable返回之前，其他线程获取了锁并唤醒，也不会有问题，因为当前线程会被正常唤醒为READY
+pub struct Yield {
+    pub context: *mut (),
+    pub vtable: unsafe fn(context: *mut ()),
+}
+
+impl Yield {
+    const fn empty() -> Self {
+        unsafe fn empty(_context: *mut ()) {}
+        Yield {
+            context: null_mut(),
+            vtable: empty,
+        }
+    }
+
+    unsafe fn call(&self) {
+        unsafe {
+            (self.vtable)(self.context);
+        }
+    }
+}
+
 /// 让出当前线程，由其他线程获取CPU并执行
 pub fn thread_yield(suspend: bool) {
+    thread_yield_internal(suspend, Yield::empty());
+}
+
+/// 让出当前线程，由其他线程获取CPU并执行
+/// 参考 [Yield]
+pub fn thread_yield_with(on_yield: Yield) {
+    thread_yield_internal(true, on_yield);
+}
+
+fn thread_yield_internal(suspend: bool, on_yield: Yield) {
     let current_thread = Arc::into_raw(current_thread().unwrap());
     let mut next_thread = {
         let _guard = IrqGuard::cli();
@@ -456,7 +570,7 @@ pub fn thread_yield(suspend: bool) {
         // 线程返回后，会重新开启中断
         let _guard = IrqGuard::cli();
         unsafe {
-            switch_thread(current_thread, next_thread, suspend);
+            switch_thread(current_thread, next_thread, suspend, on_yield);
         }
     }
 }
@@ -485,7 +599,12 @@ fn try_yield_thread() {
 
         let _guard = IrqGuard::cli();
         unsafe {
-            switch_thread(Arc::into_raw(current_thread), Arc::into_raw(thread), false);
+            switch_thread(
+                Arc::into_raw(current_thread),
+                Arc::into_raw(thread),
+                false,
+                Yield::empty(),
+            );
         }
     }
 }

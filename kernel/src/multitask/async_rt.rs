@@ -1,5 +1,4 @@
 use core::{
-    arch::asm,
     cell::UnsafeCell,
     marker::PhantomPinned,
     pin::Pin,
@@ -14,10 +13,10 @@ use alloc::{
 };
 
 use crate::{
-    multitask::thread,
+    multitask::thread::{self, Yield},
     sync::{
         int::{IrqGuard, sti},
-        spin::SpinLock,
+        spin::{SpinLock, SpinLockGuard},
     },
 };
 
@@ -141,14 +140,14 @@ pub fn run() -> ! {
     // 开中断，异步任务需要中断驱动
     sti();
     loop {
+        let guard = IrqGuard::cli();
+        let mut rt = RUNTIME.lock();
         // 获取一个任务
-        let task = {
-            let _guard = IrqGuard::cli();
-            let mut rt = RUNTIME.lock();
-            rt.ready.pop_front()
-        };
+        let task = rt.ready.pop_front();
 
         if let Some(task) = task {
+            drop((guard, rt));
+
             let waker = unsafe { (*task.get()).waker.clone() };
             let mut cx = Context::from_waker(&waker);
 
@@ -174,13 +173,26 @@ pub fn run() -> ! {
                 }
             }
         } else {
-            // 没有任务了，挂起当前线程并执行其他线程
-            // FIXME: 这里有潜在问题，如果在标记挂起前有异步任务唤醒，
-            // 可能会导致 队列中有可执行任务，但线程处于挂起状态
-            // thread::thread_yield(true);
-            unsafe {
-                asm!("hlt");
+            // 这里不需要drop guard，或者说不能drop guard，原因：
+            // 1. 无需drop：thread::thread_yield_with不要求是否开关中断，而且它会在内部自己关中断
+            // 2. 不能drop：我们依然持有RUNTIME的lock，如果此时被中断打断，而中断处理程序或其他线程尝试获取锁，会导致死锁
+            // 在线程重新切换回来后，会自动调用guard的drop，此时中断会被重新开启
+            // 而在切到其他线程后，对应线程也会重新打开中断
+            struct YieldContext<'a> {
+                _rt: SpinLockGuard<'a, Runtimer>,
             }
+            let mut context = Some(YieldContext { _rt: rt });
+            unsafe fn yield_vtable(context: *mut ()) {
+                let context = context as *mut Option<YieldContext<'_>>;
+                unsafe {
+                    (*context).take();
+                }
+            }
+
+            thread::thread_yield_with(Yield {
+                context: &raw mut context as *mut (),
+                vtable: yield_vtable,
+            });
         }
     }
 }
