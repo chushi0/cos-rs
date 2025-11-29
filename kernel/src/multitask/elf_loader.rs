@@ -40,16 +40,19 @@ impl elf::Loader for ElfLoader {
         writable: bool,
         executable: bool,
     ) -> Result<(), Self::LoaderError> {
-        kprintln!("alloc static");
+        kprintln!("alloc static {addr:x} {size:x} {readable} {writable} {executable}");
         if !readable {
+            kprintln!("alloc error 1");
             return Err(ElfLoaderError::PageProtection);
         }
         if writable && executable {
+            kprintln!("alloc error 2");
             return Err(ElfLoaderError::PageProtection);
         }
 
         // 保护内核页
         if addr < 0x0000_0080_0000_0000 || addr.saturating_add(size) >= 0xFFFF_FF80_0000_0000 {
+            kprintln!("alloc error 3");
             return Err(ElfLoaderError::PageReserved);
         }
 
@@ -65,9 +68,11 @@ impl elf::Loader for ElfLoader {
         if multitask::process::create_process_page(self.process_id, size as usize, page_type)
             .is_none()
         {
+            kprintln!("alloc error 4");
             return Err(ElfLoaderError::AllocFail);
         }
 
+        kprintln!("alloc success");
         Ok(())
     }
 

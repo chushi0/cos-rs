@@ -11,10 +11,7 @@ use filesystem::{
     device::{BlockDevice, BlockDeviceError},
 };
 
-use crate::{
-    kprintln,
-    sync::{int::IrqGuard, spin::SpinLock},
-};
+use crate::sync::{int::IrqGuard, spin::SpinLock};
 
 /// 全局等待队列
 static ATA_QUEUE: SpinLock<(Option<SyncRequest>, VecDeque<SyncRequest>)> =
@@ -228,7 +225,6 @@ impl Future for ReadBlockFuture<'_> {
 }
 
 fn send_io_command(request: &SyncRequest) {
-    kprintln!("send io command");
     let mut interrupt_enable: u8;
     unsafe {
         asm!(
@@ -392,6 +388,23 @@ pub fn ata_irq() {
                                 in("dx") ATA_DATA,
                                 options(nostack, preserves_flags)
                             )
+                        }
+                    }
+
+                    loop {
+                        let status: u8;
+                        unsafe {
+                            asm!(
+                                "in al, dx",
+                                out("al") status,
+                                in("dx") ATA_STATUS,
+                                options(nostack, preserves_flags),
+                            )
+                        }
+
+                        // BSY=1，控制器忙
+                        if (status & 0x80) == 0 {
+                            break;
                         }
                     }
                 }

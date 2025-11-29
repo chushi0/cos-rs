@@ -1,4 +1,5 @@
 use core::{
+    arch::asm,
     cell::UnsafeCell,
     marker::PhantomPinned,
     pin::Pin,
@@ -176,7 +177,10 @@ pub fn run() -> ! {
             // 没有任务了，挂起当前线程并执行其他线程
             // FIXME: 这里有潜在问题，如果在标记挂起前有异步任务唤醒，
             // 可能会导致 队列中有可执行任务，但线程处于挂起状态
-            thread::thread_yield(true);
+            // thread::thread_yield(true);
+            unsafe {
+                asm!("hlt");
+            }
         }
     }
 }

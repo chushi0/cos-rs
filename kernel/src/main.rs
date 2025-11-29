@@ -65,7 +65,7 @@ pub unsafe extern "C" fn kmain(
         kprintln!("init disk done");
 
         // 磁盘初始化完成后，加载第一个用户程序（/system/init）
-        kprintln!("create process...");
+        kprintln!("create /system/init process...");
         if multitask::process::create_user_process("/system/init")
             .await
             .is_none()
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn kmain(
     });
 
     // 测试/模拟代码
-    kernel_test_main();
+    // kernel_test_main();
 
     // 运行内核异步主任务
     multitask::async_rt::run()
