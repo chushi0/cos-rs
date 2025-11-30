@@ -1,9 +1,10 @@
 use core::{
     cell::UnsafeCell,
     marker::PhantomPinned,
-    pin::Pin,
+    mem::forget,
+    pin::{Pin, pin},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
-    task::{Context, RawWaker, RawWakerVTable, Waker},
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
 use alloc::{
@@ -13,7 +14,10 @@ use alloc::{
 };
 
 use crate::{
-    multitask::thread::{self, Yield},
+    multitask::{
+        self,
+        thread::{self, Thread, Yield},
+    },
     sync::{
         int::{IrqGuard, sti},
         spin::{SpinLock, SpinLockGuard},
@@ -81,8 +85,8 @@ impl WakerInner {
             // 重新转为Arc，并进行复制
             let waker = Arc::from_raw(waker as *const WakerInner);
             let cloned = waker.clone();
-            // 之前的重新用into_raw泄漏
-            _ = Arc::into_raw(waker);
+            // 之前的重新泄漏
+            forget(waker);
             // 新的包装为RawWaker返回
             RawWaker::new(Arc::into_raw(cloned) as *const (), &WAKER_VTABLE)
         }
@@ -198,6 +202,8 @@ pub fn run() -> ! {
 }
 
 /// 生成一个新的异步任务，加入到全局任务池中
+///
+/// 任务会被pin在堆上，并在专门的线程中执行。执行异步任务的线程栈大小为2M
 pub fn spawn<Fut>(fut: Fut)
 where
     Fut: Future<Output = ()> + Send + 'static,
@@ -233,5 +239,116 @@ where
     // 加入到异步队列
     unsafe {
         rt.ready.push_back(Pin::new_unchecked(task));
+    }
+}
+
+struct BlockOnWakerInner {
+    thread: Weak<SpinLock<Thread>>,
+    pending: SpinLock<bool>,
+}
+
+const BLOCK_ON_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
+    BlockOnWakerInner::clone,
+    BlockOnWakerInner::wake,
+    BlockOnWakerInner::wake_by_ref,
+    BlockOnWakerInner::drop,
+);
+
+impl BlockOnWakerInner {
+    unsafe fn clone(waker: *const ()) -> RawWaker {
+        unsafe {
+            let waker = Weak::from_raw(waker as *const BlockOnWakerInner);
+            let clone_waker = Weak::into_raw(waker.clone()) as *const ();
+            forget(waker);
+            RawWaker::new(clone_waker, &BLOCK_ON_WAKER_VTABLE)
+        }
+    }
+
+    unsafe fn wake(waker: *const ()) {
+        unsafe {
+            Self::wake_by_ref(waker);
+            Self::drop(waker);
+        }
+    }
+
+    unsafe fn wake_by_ref(waker: *const ()) {
+        unsafe {
+            let waker = Weak::from_raw(waker as *const BlockOnWakerInner);
+            if let Some(waker) = waker.upgrade() {
+                *waker.pending.lock() = false;
+                if let Some(thread) = waker.thread.upgrade() {
+                    multitask::thread::wake_thread(&thread);
+                }
+            }
+            forget(waker);
+        }
+    }
+
+    unsafe fn drop(waker: *const ()) {
+        unsafe {
+            Weak::from_raw(waker as *const BlockOnWakerInner);
+        }
+    }
+}
+
+/// 在当前线程上执行异步任务
+///
+/// 与[spawn]不同，此函数**不会**将异步任务放在堆上，并且会在当前栈中执行，栈空间可能不会太多。
+/// 任务的[Waker]与[spawn]的结构不一致，其与当前线程绑定。
+/// 当异步任务返回[Poll::Pending]时，会**挂起**当前线程，直到在其结构体上调用[Waker::wake]或[Waker::wake_by_ref]。
+///
+/// 由于异步任务特性，执行时会强制打开中断。但在函数返回后，会将中断复原为原状态。
+pub fn block_on<Fut>(future: Fut) -> Fut::Output
+where
+    Fut: Future,
+{
+    // 开中断
+    let _guard = IrqGuard::sti();
+    // pin future
+    let mut future = pin!(future);
+    // waker构造
+    let waker_inner = Arc::new(BlockOnWakerInner {
+        thread: Arc::downgrade(&multitask::thread::current_thread().unwrap()),
+        pending: SpinLock::new(false),
+    });
+    let waker = unsafe {
+        let data = Arc::downgrade(&waker_inner).into_raw() as *const ();
+        Waker::from_raw(RawWaker::new(data, &BLOCK_ON_WAKER_VTABLE))
+    };
+
+    loop {
+        // 标记pending=true，表示当前返回后需要等待
+        *waker_inner.pending.lock() = true;
+        // 执行异步任务
+        let mut cx = Context::from_waker(&waker);
+        let result = future.as_mut().poll(&mut cx);
+
+        // 检查结果
+        if let Poll::Ready(result) = result {
+            return result;
+        }
+
+        // 如果已经被唤醒了，立刻再次调用poll
+        let pending = waker_inner.pending.lock();
+        if !*pending {
+            continue;
+        }
+
+        // 让出线程并挂起
+        struct YieldContext<'a> {
+            _pending: SpinLockGuard<'a, bool>,
+        }
+        let mut context = Some(YieldContext { _pending: pending });
+        unsafe fn yield_vtable(context: *mut ()) {
+            let context = context as *mut Option<YieldContext<'_>>;
+            unsafe {
+                (*context).take();
+            }
+        }
+
+        thread::thread_yield_with(Yield {
+            context: &raw mut context as *mut (),
+            vtable: yield_vtable,
+        });
     }
 }

@@ -194,27 +194,30 @@ pub fn create_kernel_async_thread() {
 
 /// 唤醒内核线程，用于内核异步运行时
 pub fn wake_kernel_thread() {
-    wake_thread(sync::percpu::get_kernel_async_thread_id());
+    wake_thread_id(sync::percpu::get_kernel_async_thread_id());
 }
 
 /// 唤醒指定的线程
 ///
 /// 若目标线程为挂起状态，则切换为Ready状态并加入就绪队列。否则不执行任何操作
-pub fn wake_thread(thread_id: u64) {
+pub fn wake_thread_id(thread_id: u64) {
     let Some(thread) = ({
         let _guard = IrqGuard::cli();
         THREADS.lock().get(&thread_id).cloned()
     }) else {
         return;
     };
+    wake_thread(&thread);
+}
 
+pub fn wake_thread(thread: &Arc<SpinLock<Thread>>) {
     let _guard = IrqGuard::cli();
     let mut thread_lock = thread.lock();
     let status = thread_lock.status;
     if matches!(status, ThreadStatus::Suspend) {
         thread_lock.status = ThreadStatus::Ready;
         drop(thread_lock);
-        READY_THREADS.lock().push_back(Arc::downgrade(&thread));
+        READY_THREADS.lock().push_back(Arc::downgrade(thread));
     }
 }
 
