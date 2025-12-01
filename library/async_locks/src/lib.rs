@@ -7,6 +7,8 @@ mod spin;
 
 type SyncLock<T> = spin::SpinLock<T>;
 
-pub mod semaphore;
+pub mod channel;
+pub mod condvar;
 pub mod mutex;
 pub mod rwlock;
+pub mod semaphore;

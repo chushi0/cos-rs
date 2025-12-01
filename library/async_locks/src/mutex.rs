@@ -31,7 +31,8 @@ pub struct Mutex<T> {
 ///
 /// 持有期间提供 `&T` / `&mut T` 的访问。
 pub struct MutexGuard<'a, T> {
-    mutex: &'a Mutex<T>,
+    // pub(crate) for Condvar
+    pub(crate) mutex: &'a Mutex<T>,
     #[allow(dead_code)]
     semaphore_guard: SemaphoreGuard<'a>,
 }
