@@ -32,6 +32,14 @@ pub struct Process {
     pub thread_ids: BTreeSet<u64>,
     // 页表地址
     pub page_table: NonZeroU64,
+    // 退出码
+    pub exit_code: Option<u64>,
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        // TODO: free page table
+    }
 }
 
 /// 创建进程
@@ -44,6 +52,7 @@ pub fn create_process() -> Option<Arc<SpinLock<Process>>> {
         process_id,
         thread_ids: BTreeSet::new(),
         page_table,
+        exit_code: None,
     };
     let process = Arc::new(SpinLock::new(process));
 
@@ -270,4 +279,22 @@ extern "C" fn user_thread_entry() -> ! {
         "jmp {enter_user_mode}",
         enter_user_mode = sym enter_user_mode,
     )
+}
+
+pub fn set_exit_code(process: &SpinLock<Process>, exit_code: u64) {
+    process.lock().exit_code = Some(exit_code);
+}
+
+pub fn stop_all_thread(process: &SpinLock<Process>) {
+    let process = process.lock();
+    for thread_id in &process.thread_ids {
+        if let Some(thread) = multitask::thread::get_thread(*thread_id) {
+            multitask::thread::stop_thread(&thread);
+        }
+    }
+}
+
+pub fn stop_process(process_id: u64) {
+    let _guard = IrqGuard::cli();
+    PROCESSES.lock().remove(&process_id);
 }

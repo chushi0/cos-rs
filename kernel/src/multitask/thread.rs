@@ -49,16 +49,31 @@ pub struct Thread {
 
 impl Drop for Thread {
     fn drop(&mut self) {
-        if let Some(rsp0) = self.rsp0.take() {
-            multitask::async_rt::spawn(async move {
+        let thread_id = self.thread_id;
+        let rsp0 = self.rsp0.take();
+        let process_id = self.process_id.take();
+        multitask::async_rt::spawn(async move {
+            if let Some(rsp0) = rsp0 {
                 unsafe {
                     memory::physics::free_mapped_frame(rsp0.get() as usize, RSP0_SIZE);
                 }
-            });
-        }
+            }
+
+            if let Some(process_id) = process_id {
+                if let Some(process) = multitask::process::get_process(process_id.get()) {
+                    let _guard = IrqGuard::cli();
+                    let mut process = process.lock();
+                    process.thread_ids.remove(&thread_id);
+                    if process.thread_ids.is_empty() {
+                        multitask::process::stop_process(process_id.get());
+                    }
+                }
+            }
+        });
     }
 }
 
+#[repr(C)]
 #[derive(Debug)]
 pub struct Context {
     pub r15: u64,
@@ -131,6 +146,13 @@ pub unsafe fn create_thread(
     THREADS.lock().insert(thread_id, thread.clone());
     if !initial_suspend {
         READY_THREADS.lock().push_back(Arc::downgrade(&thread));
+    }
+
+    if let Some(process_id) = process_id {
+        let process = multitask::process::get_process(process_id.get());
+        if let Some(process) = process {
+            process.lock().thread_ids.insert(thread_id);
+        }
     }
 
     Some(thread)
@@ -311,7 +333,11 @@ unsafe fn switch_thread(
                     ThreadStatus::Suspend => (),
                     ThreadStatus::Terminating => unreachable!(),
                     ThreadStatus::Terminated => {
-                        TERMINATED_THREADS.lock().push_back(Arc::downgrade(&thread))
+                        let mut terminated_thread = TERMINATED_THREADS.lock();
+                        // TODO: 当内存不足时，考虑如何回收线程资源
+                        if terminated_thread.try_reserve(1).is_ok() {
+                            terminated_thread.push_back(Arc::downgrade(&thread));
+                        }
                     }
                 }
             }
@@ -337,6 +363,7 @@ unsafe fn switch_thread(
             // 所属进程
             let process_id = lock.process_id;
             drop(lock);
+            drop(thread);
             // 设置当前线程
             sync::percpu::set_current_thread_id(thread_id);
             // 设置切换栈
@@ -541,7 +568,7 @@ pub fn thread_yield_with(on_yield: Yield) {
 }
 
 fn thread_yield_internal(suspend: bool, on_yield: Yield) {
-    let current_thread = Arc::into_raw(current_thread().unwrap());
+    let current_thread = current_thread().unwrap();
     let mut next_thread = {
         let _guard = IrqGuard::cli();
         loop {
@@ -568,6 +595,7 @@ fn thread_yield_internal(suspend: bool, on_yield: Yield) {
 
     // 仅当需要切换时，进行线程切换
     if let Some(next_thread) = next_thread {
+        let current_thread = Arc::into_raw(current_thread);
         let next_thread = Arc::into_raw(next_thread);
         // 我们在此处关闭中断，确保切换线程时不会被中断打断
         // 线程返回后，会重新开启中断
@@ -610,4 +638,14 @@ fn try_yield_thread() {
             );
         }
     }
+}
+
+pub fn stop_thread(thread: &SpinLock<Thread>) {
+    let mut thread = thread.lock();
+    thread.status = ThreadStatus::Terminating;
+    // TODO: 多CPU - 如果线程仍处于Running状态，通过中断提醒对方结束
+}
+
+pub fn get_thread(thread_id: u64) -> Option<Arc<SpinLock<Thread>>> {
+    THREADS.lock().get(&thread_id).cloned()
 }

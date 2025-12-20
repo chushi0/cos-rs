@@ -232,14 +232,18 @@ where
     }
     // 我们在构造task时使用了Arc::as_ptr，本质上已经拿走了Arc的所有权，因此这里需要将Arc泄漏
     // （WakerInner在drop时会释放Arc）
-    _ = Arc::into_raw(waker_inner);
-
-    let _guard = IrqGuard::cli();
-    let mut rt = RUNTIME.lock();
-    // 加入到异步队列
-    unsafe {
-        rt.ready.push_back(Pin::new_unchecked(task));
+    forget(waker_inner);
+    {
+        let _guard = IrqGuard::cli();
+        let mut rt = RUNTIME.lock();
+        // 加入到异步队列
+        unsafe {
+            rt.ready.push_back(Pin::new_unchecked(task));
+        }
     }
+
+    // 唤醒异步线程
+    thread::wake_kernel_thread();
 }
 
 struct BlockOnWakerInner {

@@ -312,8 +312,22 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_exit(code: u64) {
-        kprintln!("syscall:exit {code}");
+        kprintln!("calling syscall exit {code}");
+
+        // 在thread_yield执行前，必须释放全部临时对象
+        // 因为thread_yield不会再返回，若不释放会导致内存泄漏
+        {
+            let current_thread = multitask::thread::current_thread().unwrap();
+            let process_id = current_thread.lock().process_id.unwrap();
+            let process = multitask::process::get_process(process_id.get()).unwrap();
+            multitask::process::set_exit_code(&process, code);
+            multitask::process::stop_all_thread(&process);
+        }
+
         multitask::thread::thread_yield(true);
+
+        // 当前线程已经结束，且已让出，调度器不应该再回到当前线程执行
+        unreachable!()
     }
 }
 
