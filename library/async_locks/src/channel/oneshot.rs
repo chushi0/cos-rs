@@ -29,6 +29,7 @@ pub struct Receiver<T> {
     inner: Arc<OneshotInner<T>>,
 }
 
+#[derive(Debug)]
 pub struct SenderLost;
 
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
@@ -79,6 +80,9 @@ struct OneshotInner<T> {
     data: Mutex<Option<T>>,
     condvar: Condvar,
 }
+
+unsafe impl<T: Send> Send for OneshotInner<T> {}
+unsafe impl<T: Send> Sync for OneshotInner<T> {}
 
 enum ReceiverFuture<'a, T> {
     Init {

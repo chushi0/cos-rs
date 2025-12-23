@@ -46,7 +46,7 @@ enum BuildArgs {
     },
 }
 
-const SYSTEM_APPLICATIONS: &[&str] = &["init"];
+const SYSTEM_APPLICATIONS: &[&str] = &["init", "shell"];
 
 fn main() {
     let arg = BuildArgs::parse();

@@ -12,3 +12,10 @@ version = "0.1.0"
 dependencies = [
  "cos-sys",
 ]
+
+[[package]]
+name = "shell"
+version = "0.1.0"
+dependencies = [
+ "cos-sys",
+]

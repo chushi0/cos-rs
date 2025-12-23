@@ -3,11 +3,13 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(test_runner)]
 
-use cos_sys::multitask::{exit, create_process};
+use cos_sys::multitask::exit;
 
 #[unsafe(export_name = "_start")]
 fn main() -> ! {
-    _ = create_process("/system/shell");
+    unsafe {
+        cos_sys::syscall!(0);
+    }
     exit(0);
 }
 

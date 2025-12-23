@@ -1,14 +1,27 @@
 use core::num::NonZeroU64;
 
+use alloc::vec::Vec;
+
 use crate::multitask::{
     self,
     process::{ProcessMemoryError, ProcessPageType},
 };
 
 pub struct ElfLoader {
-    pub process_id: u64,
+    process_id: u64,
+    allocated_page: Vec<(u64, u64)>,
 }
 
+impl ElfLoader {
+    pub fn new(process_id: u64) -> Self {
+        Self {
+            process_id,
+            allocated_page: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum ElfLoaderError {
     // 页表被保留
     PageReserved,
@@ -49,7 +62,27 @@ impl elf::Loader for ElfLoader {
             return Err(ElfLoaderError::PageReserved);
         }
 
-        let vaddr = NonZeroU64::new(addr).unwrap();
+        let mut new_addr = addr & !0xfff;
+        let mut size = size + addr - new_addr;
+
+        // 链接器可能会将页拼到前一个页上，兼容下这种情况
+        // FIXME: 这不是一个好的实现，但我们先这样做，以兼容目前的问题
+        if self
+            .allocated_page
+            .iter()
+            .any(|(allocate_addr, allocate_size)| {
+                new_addr >= *allocate_addr && new_addr < *allocate_addr + *allocate_size
+            })
+        {
+            new_addr += 0x1000;
+            size -= 0x1000;
+        }
+        
+        if size == 0 {
+            return Ok(());
+        }
+
+        let vaddr = NonZeroU64::new(new_addr).unwrap();
         let page_type = if writable {
             ProcessPageType::StaticData(vaddr)
         } else if executable {
@@ -63,6 +96,8 @@ impl elf::Loader for ElfLoader {
         {
             return Err(ElfLoaderError::AllocFail);
         }
+
+        self.allocated_page.push((new_addr, size));
 
         Ok(())
     }

@@ -43,6 +43,7 @@ pub enum ElfReadError<RE, SE> {
 }
 
 // 加载ELF错误
+#[derive(Debug)]
 pub enum ElfLoadError<RE, SE, LE> {
     // 在读取时发生错误
     Read(ReadExactError<RE>),

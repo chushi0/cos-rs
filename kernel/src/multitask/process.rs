@@ -108,6 +108,7 @@ pub fn create_process_page(
     virtual_ptr.addr().try_into().ok()
 }
 
+#[derive(Debug)]
 pub enum ProcessMemoryError {
     /// 进程不存在
     ProcessNotFound,
@@ -235,7 +236,7 @@ pub async fn create_user_process(exe: &str) -> Option<u64> {
         file.close().await.ok()?;
         return None;
     };
-    let mut loader = ElfLoader { process_id };
+    let mut loader = ElfLoader::new(process_id);
     if elf.load(&mut loader).await.is_err() {
         file.close().await.ok()?;
         return None;

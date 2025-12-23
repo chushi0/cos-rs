@@ -18,4 +18,5 @@ strip = "symbols"
 cos-sys = {path = "../user/library/cos-sys"}
 elf = {path = "../library/elf"}
 filesystem = {path = "../library/filesystem"}
+async_locks = {path = "../library/async_locks"}
 rlibc = "1.0.0"

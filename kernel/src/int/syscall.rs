@@ -3,7 +3,10 @@ use core::{
     cmp::Ordering,
 };
 
-use crate::{kprintln, memory, multitask, sync::percpu};
+use crate::{
+    kprintln, memory, multitask,
+    sync::{int::IrqGuard, percpu},
+};
 
 pub(super) unsafe fn init() {
     const IA32_EFER: u32 = 0xc0000080;
@@ -211,6 +214,26 @@ const SYSCALL_HANDLER: &[SyscallEntry] = &[
         cos_sys::idx::IDX_SUB_MEMORY_MODIFY,
         syscall_test,
     ),
+    (
+        cos_sys::idx::IDX_PROCESS,
+        cos_sys::idx::IDX_SUB_PROCESS_CURRENT,
+        syscall_current_process,
+    ),
+    (
+        cos_sys::idx::IDX_PROCESS,
+        cos_sys::idx::IDX_SUB_PROCESS_CREATE,
+        syscall_create_process,
+    ),
+    (
+        cos_sys::idx::IDX_PROCESS,
+        cos_sys::idx::IDX_SUB_PROCESS_KILL,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_PROCESS,
+        cos_sys::idx::IDX_SUB_PROCESS_WAIT,
+        syscall_test,
+    ),
 ];
 
 // assert
@@ -345,17 +368,88 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_current_thread(thread_id_ptr: u64) -> u64 {
-        let thread_id_ptr = thread_id_ptr as *mut u64;
         if !memory::physics::is_user_space_virtual_memory(thread_id_ptr as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
         let thread_id = percpu::get_current_thread_id();
-        // Safety:
-        // 1. 我们已经检查指针位于用户空间范围内，写入不会影响内核数据
-        // 2. 如果该页未映射或未对齐，写入会导致软中断产生，但在此处触发软中断不会有问题（与用户态程序触发软中断一致）
+        let process_id = {
+            let _guard = IrqGuard::cli();
+            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
+        };
         unsafe {
-            *thread_id_ptr = thread_id;
+            if multitask::process::write_user_process_memory_struct(process_id, thread_id_ptr, &thread_id).is_err() {
+                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            }
         }
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn syscall_current_process(process_id_ptr: u64) -> u64 {
+        if !memory::physics::is_user_space_virtual_memory(process_id_ptr as usize) {
+            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+        }
+        let thread_id = percpu::get_current_thread_id();
+        let process_id = {
+            let _guard = IrqGuard::cli();
+            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
+        };
+        unsafe {
+            if multitask::process::write_user_process_memory_struct(process_id, process_id_ptr, &process_id).is_err() {
+                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            }
+        }
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn syscall_create_process(exe_ptr: u64, exe_len: u64, process_id_ptr: u64) -> u64 {
+        if !memory::physics::is_user_space_virtual_memory(exe_ptr as usize) ||
+            !memory::physics::is_user_space_virtual_memory((exe_ptr + exe_len) as usize) ||
+            !memory::physics::is_user_space_virtual_memory(process_id_ptr as usize) {
+                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+        }
+
+        let thread_id = percpu::get_current_thread_id();
+        let process_id = {
+            let _guard = IrqGuard::cli();
+            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
+        };
+
+        let mut exe = alloc::vec![0u8; exe_len as usize];
+        unsafe {
+            if multitask::process::read_user_process_memory(process_id, exe_ptr, exe.as_mut_ptr(), exe_len as usize).is_err() {
+                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            }
+        }
+
+        let (sender, receiver) = async_locks::channel::oneshot::channel();
+        multitask::async_rt::spawn(async move {
+            let Ok(exe_str) = str::from_utf8(&exe) else {
+                sender.send(Err(cos_sys::error::ErrorKind::BadArgument)).await;
+                return;
+            };
+
+            if let Some(pid) = multitask::process::create_user_process(exe_str).await {
+                sender.send(Ok(pid)).await;
+            } else {
+                sender.send(Err(cos_sys::error::ErrorKind::Unknown)).await; // TODO: 占位，应当返回具体错误类型
+            }
+        });
+
+        let pid = match multitask::async_rt::block_on(receiver.recv()).unwrap() {
+            Ok(pid) => pid,
+            Err(err) => return err as u64,
+        };
+
+        unsafe {
+            if multitask::process::write_user_process_memory_struct(process_id, process_id_ptr, &pid).is_err() {
+                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            }
+        }
+
         SYSCALL_SUCCESS
     }
 }

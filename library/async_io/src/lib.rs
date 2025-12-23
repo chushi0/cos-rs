@@ -13,6 +13,7 @@ pub trait Seekable {
     fn seek(&mut self, cursor: u64) -> impl Future<Output = Result<(), Self::SeekError>> + Send;
 }
 
+#[derive(Debug)]
 pub enum ReadExactError<E> {
     InnerError(E),
     EOF,

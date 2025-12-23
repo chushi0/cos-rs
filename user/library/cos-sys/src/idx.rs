@@ -80,3 +80,31 @@ pub const IDX_SUB_MEMORY_TEST: u64 = 0x100003;
 /// 系统调用编号为 [IDX_MEMORY].
 /// 函数封装为 [crate::memory::modify_page]
 pub const IDX_SUB_MEMORY_MODIFY: u64 = 0x100004;
+
+/// 与进程管理相关的系统调用
+/// 
+/// 子编号：
+/// [IDX_SUB_PROCESS_CURRENT]
+/// [IDX_SUB_PROCESS_CREATE]
+/// [IDX_SUB_PROCESS_KILL]
+pub const IDX_PROCESS: u64 = 0x10004;
+/// 获取当前进程
+/// 
+/// 系统调用编号为 [IDX_PROCESS]
+/// 函数封装为 [crate::multitask::current_process]
+pub const IDX_SUB_PROCESS_CURRENT: u64 = 0x100001;
+/// 创建进程
+/// 
+/// 系统调用编号为 [IDX_PROCESS]
+/// 函数封装为 [crate::multitask::create_process]
+pub const IDX_SUB_PROCESS_CREATE: u64 = 0x100002;
+/// 停止进程
+/// 
+/// 系统调用编号为 [IDX_PROCESS]
+/// 函数封装为 [crate::multitask::kill_process]
+pub const IDX_SUB_PROCESS_KILL: u64 = 0x100003;
+/// 等待进程停止
+/// 
+/// 系统调用编号为 [IDX_PROCESS]
+/// 函数封装为 [crate::multitask::wait_process]
+pub const IDX_SUB_PROCESS_WAIT: u64 = 0x100004;

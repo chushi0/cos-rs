@@ -33,6 +33,7 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "async_locks",
  "cos-sys",
  "elf",
  "filesystem",
