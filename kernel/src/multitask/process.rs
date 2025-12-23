@@ -38,7 +38,10 @@ pub struct Process {
 
 impl Drop for Process {
     fn drop(&mut self) {
-        // TODO: free page table
+        // 释放页表
+        unsafe {
+            memory::physics::release_user_page_table(self.page_table);
+        }
     }
 }
 

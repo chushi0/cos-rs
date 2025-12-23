@@ -216,23 +216,15 @@ impl FrameAllocator {
 
     fn init(&mut self) {
         // 从KERNEL_PD和KERNEL_PT中查找当前内核已使用内存
-        // 注意内核栈也在页表中，且占用2M，下面的循环中重复计数，因此需要减去，
-        // 而内核起始物理内存也是2M，与内核栈刚好抵消，所以start_address为0
-        let mut start_address = 0;
+        // 1. loader程序是从2M地址开始分配的，因此start_address起始为2M
+        // 2. 虽然实际没有用那么多空间，但是内核栈对应的物理空间被放在了内核代码段之后，因此将内核页不满2M的视为2M（会浪费部分内存）
+        let mut start_address = 0x20_0000;
         const SIZE_2M: usize = 0x20_0000;
-        const SIZE_4K: usize = 0x1000;
         unsafe {
             if let Some(pd) = KERNEL_PD {
                 for entry in &**pd {
-                    if entry.present() && entry.ps() {
-                        start_address += SIZE_2M;
-                    }
-                }
-            }
-            if let Some(pt) = KERNEL_PT {
-                for entry in &**pt {
                     if entry.present() {
-                        start_address += SIZE_4K;
+                        start_address += SIZE_2M;
                     }
                 }
             }
@@ -441,6 +433,7 @@ pub fn alloc_mapped_frame(size: usize, hint: AllocFrameHint) -> Option<NonNull<u
 /// address必须为[`alloc_mapped_frame`]返回的地址，且size必须与分配时一致。
 /// 任何双重释放或释放未分配的内存均会发生未定义行为
 pub unsafe fn free_mapped_frame(address: usize, size: usize) {
+    let _guard = IrqGuard::cli();
     let frame_count = size / 0x1000;
     for i in 0..frame_count {
         unsafe {
@@ -811,12 +804,59 @@ pub fn alloc_user_page_table() -> Option<NonZeroU64> {
 /// 释放用户态页表
 pub unsafe fn release_user_page_table(addr: NonZeroU64) {
     let _guard = IrqGuard::cli();
-    // 由于页表并未映射，我们仅需要将此内存归还物理页分配器
-    // TODO: 递归检查内部页表，确保已释放所有内存！
+
+    // 获取pml4内存页
+    let pml4 = unsafe {
+        let mut pml4 = MaybeUninit::<PageTable>::uninit();
+        read_memory(addr.get() as usize, &mut pml4);
+        pml4.assume_init()
+    };
+
+    // 遍历内存页
+    for page_entry in &pml4.0 {
+        walk_free_page(page_entry, 3);
+    }
+
+    // 归还PML4页表所属内存页
     unsafe {
         FRAME_ALLOCATOR
             .lock()
             .delloc_frame(addr.try_into().unwrap());
+    }
+
+    fn walk_free_page(page_entry: &PageEntry, deep: u8) {
+        if !page_entry.present() || !page_entry.user() {
+            return;
+        }
+
+        // 当前不支持PS页
+        assert!(!page_entry.ps());
+
+        if deep > 1 {
+            let page_table = unsafe {
+                let mut page_table = MaybeUninit::<PageTable>::uninit();
+                read_memory(page_entry.address() as usize, &mut page_table);
+                page_table.assume_init()
+            };
+
+            for table in &page_table.0 {
+                walk_free_page(table, deep - 1);
+            }
+
+            // 归还页表对应的内存页
+            unsafe {
+                FRAME_ALLOCATOR
+                    .lock()
+                    .delloc_frame((page_entry.address() as usize).try_into().unwrap());
+            }
+        } else {
+            // 归还物理内存
+            unsafe {
+                FRAME_ALLOCATOR
+                    .lock()
+                    .delloc_frame((page_entry.address() as usize).try_into().unwrap());
+            }
+        }
     }
 }
 
@@ -994,6 +1034,10 @@ impl PageEntry {
 
     fn ps(&self) -> bool {
         (self.0 & Self::P_PS) != 0
+    }
+
+    fn user(&self) -> bool {
+        (self.0 & Self::P_US) != 0
     }
 
     fn present(&self) -> bool {

@@ -164,7 +164,7 @@ const SYSCALL_HANDLER: &[SyscallEntry] = &[
     (
         cos_sys::idx::IDX_EXIT,
         cos_sys::idx::IDX_SUB_EXIT_THREAD,
-        syscall_test,
+        syscall_exit_thread,
     ),
     (
         cos_sys::idx::IDX_THREAD,
@@ -312,8 +312,6 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_exit(code: u64) {
-        kprintln!("calling syscall exit {code}");
-
         // 在thread_yield执行前，必须释放全部临时对象
         // 因为thread_yield不会再返回，若不释放会导致内存泄漏
         {
@@ -327,6 +325,20 @@ syscall_handler! {
         multitask::thread::thread_yield(true);
 
         // 当前线程已经结束，且已让出，调度器不应该再回到当前线程执行
+        unreachable!()
+    }
+}
+
+syscall_handler! {
+    fn syscall_exit_thread(code: u64) {
+        // TODO: 当前未实现线程退出码
+        _ = code;
+        {
+            let current_thread = multitask::thread::current_thread().unwrap();
+            multitask::thread::stop_thread(&current_thread);
+        }
+
+        multitask::thread::thread_yield(true);
         unreachable!()
     }
 }

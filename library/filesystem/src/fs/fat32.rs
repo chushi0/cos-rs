@@ -635,12 +635,8 @@ impl Fat32Inner {
                 for j in 0..(self.bpb.bytes_per_sector as usize) / size_of::<DirectoryEntry>() {
                     // Safety:
                     // buffer中指定内存为从磁盘上读取的目录项数据，短文件名和长文件名有同样的长度，可以直接读取
-                    let entry = unsafe {
-                        read_unaligned(
-                            &raw const buffer[j * size_of::<DirectoryEntry>()]
-                                as *const DirectoryEntry,
-                        )
-                    };
+                    let entry =
+                        unsafe { read_unaligned(buffer.as_ptr().cast::<DirectoryEntry>().add(j)) };
 
                     // 检查判断当前条目为短文件名还是长文件名
                     // Safety: 不论是short还是long，attr字段的offset/size/type都是一致的，我们可以任取一个
@@ -2321,6 +2317,22 @@ mod test {
 
             assert_eq!(read_count, content.len() as u64);
             assert_eq!(&buf[..content.len()], content);
+        });
+    }
+
+    #[test]
+    fn test_open_not_found_file() {
+        run_task(async {
+            let device = Arc::new(MemoryDevice::new(512 * 28, 512));
+            let fs = Fat32FileSystem::with_format(device.clone()).await.unwrap();
+
+            let file_path = PathBuf::from_str("test.txt").unwrap();
+            let err = fs
+                .open_file(file_path.as_path())
+                .await
+                .map(|_| ())
+                .unwrap_err();
+            assert!(matches!(err, FileSystemError::FileNotFound));
         });
     }
 }
