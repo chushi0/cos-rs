@@ -55,7 +55,7 @@ impl VgaTextWriter {
         };
 
         // 清空缓冲区
-        buffer.fill(Self::with_style(Self::DEFAULT_STYLE, b' '));
+        buffer.fill(Self::char_with_style(Self::DEFAULT_STYLE, b' '));
 
         // 复位光标
         Self::hw_set_cursor(0, 0);
@@ -64,6 +64,28 @@ impl VgaTextWriter {
             buffer,
             cursor: (0, 0),
             style: Self::DEFAULT_STYLE,
+        }
+    }
+
+    /// 创建带有样式的VgaTextWriter
+    /// 
+    /// 使用pub公开，因为在panic需要重新创建，而不能信任全局写入的对象
+    pub unsafe fn with_style(style: u8) -> Self {
+        // Safety: bootloader已经将此区域加入页表
+        let buffer = unsafe {
+            slice::from_raw_parts_mut(Self::ADDRESS as *mut u16, Self::WIDTH * Self::HEIGHT)
+        };
+
+        // 清空缓冲区
+        buffer.fill(Self::char_with_style(style, b' '));
+
+        // 复位光标
+        Self::hw_set_cursor(0, 0);
+
+        Self {
+            buffer,
+            cursor: (0, 0),
+            style,
         }
     }
 
@@ -155,13 +177,13 @@ impl VgaTextWriter {
         Self::hw_set_cursor(self.cursor.0, self.cursor.1);
     }
 
-    const fn with_style(style: u8, char: u8) -> u16 {
+    const fn char_with_style(style: u8, char: u8) -> u16 {
         ((style as u16) << 8) | (char as u16)
     }
 
     fn write_char(&mut self, char: u8) {
         self.buffer[self.cursor.0 as usize * Self::WIDTH + self.cursor.1 as usize] =
-            Self::with_style(self.style, char);
+            Self::char_with_style(self.style, char);
     }
 
     fn check_width_overflow(&mut self) {
@@ -182,7 +204,7 @@ impl VgaTextWriter {
                 );
             }
             self.buffer[(Self::WIDTH * (Self::HEIGHT - 1))..]
-                .fill(Self::with_style(self.style, b' '));
+                .fill(Self::char_with_style(self.style, b' '));
             self.cursor.0 -= 1;
         }
     }

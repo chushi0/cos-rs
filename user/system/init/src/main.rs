@@ -3,7 +3,7 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(test_runner)]
 
-use cos_sys::multitask::{exit, create_process};
+use cos_sys::multitask::{create_process, exit};
 
 #[unsafe(export_name = "_start")]
 fn main() -> ! {

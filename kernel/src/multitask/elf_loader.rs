@@ -75,7 +75,7 @@ impl elf::Loader for ElfLoader {
             })
         {
             new_addr += 0x1000;
-            size -= 0x1000;
+            size = size.saturating_sub(0x1000);
         }
         
         if size == 0 {

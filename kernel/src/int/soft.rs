@@ -2,13 +2,13 @@ use core::arch::asm;
 
 use crate::{
     int::idt::{StackFrame, StackFrameWithErrorCode},
-    interrupt_handler, kprintln, loop_hlt,
+    interrupt_handler, kprintln, multitask, sync,
 };
 
 interrupt_handler! {
     fn divide_by_zero(stack: &mut StackFrame) {
-        kprintln!("divide by zero: {stack:x?}");
-        loop_hlt();
+        user_kill_self(stack.cs);
+        panic!("#DE triggered, $rip=0x{:x}", stack.rip);
     }
 }
 
@@ -20,56 +20,51 @@ interrupt_handler! {
 
 interrupt_handler! {
     fn invalid_opcode(stack: &mut StackFrame) {
-        kprintln!("invalid opcode: {stack:x?}");
-        loop_hlt();
+        user_kill_self(stack.cs);
+        panic!("#UD triggered, $rip=0x{:x}", stack.rip);
     }
 }
 
 interrupt_handler! {
     #[with_error_code]
     fn double_fault(stack: &mut StackFrameWithErrorCode) {
-        kprintln!("double fault: {stack:x?}");
-        loop_hlt();
+        panic!("#DF triggered, stack: {stack:x?}");
     }
 }
 
 interrupt_handler! {
     #[with_error_code]
     fn invalid_tss(stack: &mut StackFrameWithErrorCode) {
-        kprintln!("invalid tss: {stack:x?}");
-        loop_hlt();
+        panic!("#TS triggered, $rsp=0x{:x}", stack.rsp);
     }
 }
 
 interrupt_handler! {
     #[with_error_code]
     fn segment_not_present(stack: &mut StackFrameWithErrorCode) {
-        kprintln!("segment not present: {stack:x?}");
-        loop_hlt();
+        panic!("#NP triggered, $rsp=0x{:x}", stack.rsp);
     }
 }
 
 interrupt_handler! {
     #[with_error_code]
     fn stack_segment_fault(stack: &mut StackFrameWithErrorCode) {
-        kprintln!("stack segment fault: {stack:x?}");
-        loop_hlt();
+        panic!("#SS triggered, $rsp=0x{:x}", stack.rsp);
     }
 }
 
 interrupt_handler! {
     #[with_error_code]
     fn general_protection(stack: &mut StackFrameWithErrorCode) {
-        crate::sync::int::cli();
-        kprintln!("general protection: {stack:x?}");
-        loop_hlt();
+        user_kill_self(stack.cs);
+        panic!("#GP triggered, $rip=0x{:x}, error=0x{:x}", stack.rip, stack.error_code);
     }
 }
 
 interrupt_handler! {
     #[with_error_code]
     fn page_fault(stack: &mut StackFrameWithErrorCode) {
-        kprintln!("page fault: {stack:x?}");
+        user_kill_self(stack.cs);
         let fault_addr: usize;
         unsafe {
             asm!(
@@ -78,15 +73,30 @@ interrupt_handler! {
                 options(nostack, preserves_flags)
             );
         }
-        kprintln!("fault addr: 0x{:x}", fault_addr);
-        loop_hlt();
+        panic!("#PF triggered, $rip=0x{:x}, fault_addr=0x{fault_addr:x}, error=0x{:x}", stack.rip, stack.error_code);
     }
 }
 
 interrupt_handler! {
     #[with_error_code]
     fn alignment_check(stack: &mut StackFrameWithErrorCode) {
-        kprintln!("alignment check: {stack:x?}");
-        loop_hlt();
+        user_kill_self(stack.cs);
+        panic!("#AC triggered, $rip=0x{:x}", stack.rip);
     }
+}
+
+/// 如果发生在用户态，则kill当前线程
+fn user_kill_self(cs: u64) {
+    if (cs & 0b11) != 0b11 {
+        return;
+    }
+
+    {
+        let thread_id = sync::percpu::get_current_thread_id();
+        let thread = multitask::thread::get_thread(thread_id).unwrap();
+        multitask::thread::stop_thread(&thread);
+    }
+
+    multitask::thread::thread_yield(true);
+    unreachable!()
 }

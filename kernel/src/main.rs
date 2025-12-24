@@ -26,7 +26,6 @@ pub unsafe extern "C" fn kmain(
 ) -> ! {
     // 初始化VGA文本缓冲，并输出文本
     display::vga_text::init();
-    kprintln!("Hello, kernel!");
     // 初始化中断
     unsafe {
         int::init();
@@ -48,7 +47,7 @@ pub unsafe extern "C" fn kmain(
     // 初始化磁盘
     multitask::async_rt::spawn(async move {
         if io::disk::init_disk(startup_disk as u8).await.is_err() {
-            kprintln!("failed to init disk");
+            panic!("failed to init disk");
         }
 
         // 磁盘初始化完成后，加载第一个用户程序（/system/init）
@@ -56,7 +55,7 @@ pub unsafe extern "C" fn kmain(
             .await
             .is_none()
         {
-            kprintln!("load /system/init failed");
+            panic!("start /system/init failed");
         }
     });
 
@@ -65,11 +64,66 @@ pub unsafe extern "C" fn kmain(
 }
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop_hlt();
-}
+fn on_panic(info: &core::panic::PanicInfo) -> ! {
+    use core::fmt::Write;
 
-fn loop_hlt() -> ! {
+    // 关闭中断
+    // TODO: 多核情况，需要通知其他核结束工作
+    sync::int::cli();
+
+    // 重新建立一个VGA TEXT BUFFER
+    // 全局kprintln已不可信，需要使用新对象
+    // 我们已经关中断，并且不会再次打开，不会有访问冲突
+    let mut writer = unsafe { display::vga_text::VgaTextWriter::with_style(0x1f) };
+
+    // 打印蓝屏消息
+    // writeln不依赖堆，可以使用
+    // 不要在这里进行任何堆分配！！
+    _ = writeln!(
+        writer,
+        "A PROBLEM HAS BEEN DETECTED AND COS HAS BEEN SHUT DOWN TO PREVENT DAMAGE TO YOUR COMPUTER."
+    );
+    _ = writeln!(writer, "");
+    _ = writeln!(
+        writer,
+        "The system encountered a fatal condition from which it cannot recover."
+    );
+    _ = writeln!(writer, "");
+
+    _ = writeln!(writer, "Technical information:");
+    _ = writeln!(writer, "");
+    if let Some(location) = info.location() {
+        _ = writeln!(writer, "*** FILE: {}", location.file());
+        _ = writeln!(
+            writer,
+            "*** LINE: {} COLUMN: {}",
+            location.line(),
+            location.column()
+        );
+    }
+    _ = writeln!(writer, "*** MESSAGE: {}", info.message());
+    _ = writeln!(writer, "");
+    _ = writeln!(
+        writer,
+        "If this is the first time you have seen this Stop error screen, restart your system. If this screen appears again, follow these steps:"
+    );
+    _ = writeln!(writer, "");
+    _ = writeln!(
+        writer,
+        "* If problems continue, disable or remove any newly installed components."
+    );
+    _ = writeln!(
+        writer,
+        "* Contact your system administrator or kernel developer for assistance."
+    );
+    _ = writeln!(writer, "");
+    _ = writeln!(writer, "The system has been halted.");
+    _ = writeln!(writer, "");
+    _ = writeln!(writer, "STOP: 0x0000007E (KERNEL_PANIC)");
+    _ = writeln!(writer, "");
+
+    // TODO: 这里应该准备重启了
+
     loop {
         unsafe {
             asm!("hlt");
