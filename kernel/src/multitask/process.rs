@@ -8,6 +8,7 @@ use alloc::{
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     sync::Arc,
 };
+use async_locks::watch;
 use elf::ElfFile;
 use filesystem::path::PathBuf;
 
@@ -33,7 +34,9 @@ pub struct Process {
     // 页表地址
     pub page_table: NonZeroU64,
     // 退出码
-    pub exit_code: Option<u64>,
+    pub exit_code: watch::Publisher<u64>,
+    // 为其他进程wait预留
+    pub exit_code_sub: watch::Subscriber<u64>,
 }
 
 impl Drop for Process {
@@ -51,11 +54,13 @@ pub fn create_process() -> Option<Arc<SpinLock<Process>>> {
     let page_table = memory::physics::alloc_user_page_table()?;
 
     let process_id = PROCESS_ID_GENERATOR.fetch_add(1, Ordering::SeqCst) + 1;
+    let (publisher, subscriber) = watch::pair(0);
     let process = Process {
         process_id,
         thread_ids: BTreeSet::new(),
         page_table,
-        exit_code: None,
+        exit_code: publisher,
+        exit_code_sub: subscriber,
     };
     let process = Arc::new(SpinLock::new(process));
 
@@ -286,7 +291,7 @@ extern "C" fn user_thread_entry() -> ! {
 }
 
 pub fn set_exit_code(process: &SpinLock<Process>, exit_code: u64) {
-    process.lock().exit_code = Some(exit_code);
+    process.lock().exit_code.send(exit_code);
 }
 
 pub fn stop_all_thread(process: &SpinLock<Process>) {
@@ -301,4 +306,8 @@ pub fn stop_all_thread(process: &SpinLock<Process>) {
 pub fn stop_process(process_id: u64) {
     let _guard = IrqGuard::cli();
     PROCESSES.lock().remove(&process_id);
+}
+
+pub fn get_exit_code_subscriber(process: &SpinLock<Process>) -> watch::Subscriber<u64> {
+    process.lock().exit_code_sub.clone()
 }

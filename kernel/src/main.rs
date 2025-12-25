@@ -44,18 +44,31 @@ pub unsafe extern "C" fn kmain(
     // 初始化IDLE线程
     multitask::thread::create_idle_thread();
 
-    // 初始化磁盘
     multitask::async_rt::spawn(async move {
+        // 初始化磁盘
         if io::disk::init_disk(startup_disk as u8).await.is_err() {
             panic!("failed to init disk");
         }
 
         // 磁盘初始化完成后，加载第一个用户程序（/system/init）
-        if multitask::process::create_user_process("/system/init")
-            .await
-            .is_none()
-        {
+        let Some(init_id) = multitask::process::create_user_process("/system/init").await else {
             panic!("start /system/init failed");
+        };
+        let mut process_subscriber = {
+            let Some(process) = multitask::process::get_process(init_id) else {
+                panic!("/system/init die too fast!!!");
+            };
+            multitask::process::get_exit_code_subscriber(&process)
+        };
+
+        // /system/init 不应该结束
+        loop {
+            if process_subscriber.wait().await.is_err() {
+                panic!(
+                    "process /system/init die, exit code: {}",
+                    process_subscriber.borrow()
+                );
+            }
         }
     });
 
