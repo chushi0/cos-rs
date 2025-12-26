@@ -376,8 +376,10 @@ syscall_handler! {
             let _guard = IrqGuard::cli();
             multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
         };
+        let process = multitask::process::get_process(process_id).unwrap();
+
         unsafe {
-            if multitask::process::write_user_process_memory_struct(process_id, thread_id_ptr, &thread_id).is_err() {
+            if multitask::process::write_user_process_memory_struct(&process, thread_id_ptr, &thread_id).is_err() {
                 return cos_sys::error::ErrorKind::SegmentationFault as u64;
             }
         }
@@ -395,8 +397,9 @@ syscall_handler! {
             let _guard = IrqGuard::cli();
             multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
         };
+        let process = multitask::process::get_process(process_id).unwrap();
         unsafe {
-            if multitask::process::write_user_process_memory_struct(process_id, process_id_ptr, &process_id).is_err() {
+            if multitask::process::write_user_process_memory_struct(&process, process_id_ptr, &process_id).is_err() {
                 return cos_sys::error::ErrorKind::SegmentationFault as u64;
             }
         }
@@ -417,10 +420,11 @@ syscall_handler! {
             let _guard = IrqGuard::cli();
             multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
         };
+        let process = multitask::process::get_process(process_id).unwrap();
 
         let mut exe = alloc::vec![0u8; exe_len as usize];
         unsafe {
-            if multitask::process::read_user_process_memory(process_id, exe_ptr, exe.as_mut_ptr(), exe_len as usize).is_err() {
+            if multitask::process::read_user_process_memory(&process, exe_ptr, exe.as_mut_ptr(), exe_len as usize).is_err() {
                 return cos_sys::error::ErrorKind::SegmentationFault as u64;
             }
         }
@@ -445,7 +449,7 @@ syscall_handler! {
         };
 
         unsafe {
-            if multitask::process::write_user_process_memory_struct(process_id, process_id_ptr, &pid).is_err() {
+            if multitask::process::write_user_process_memory_struct(&process, process_id_ptr, &pid).is_err() {
                 return cos_sys::error::ErrorKind::SegmentationFault as u64;
             }
         }

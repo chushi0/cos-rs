@@ -51,15 +51,11 @@ pub unsafe extern "C" fn kmain(
         }
 
         // 磁盘初始化完成后，加载第一个用户程序（/system/init）
-        let Some(init_id) = multitask::process::create_user_process("/system/init").await else {
+        let Some(process) = multitask::process::create_user_process("/system/init").await else {
             panic!("start /system/init failed");
         };
-        let mut process_subscriber = {
-            let Some(process) = multitask::process::get_process(init_id) else {
-                panic!("/system/init die too fast!!!");
-            };
-            multitask::process::get_exit_code_subscriber(&process)
-        };
+        let mut process_subscriber = multitask::process::get_exit_code_subscriber(&process);
+        drop(process);
 
         // /system/init 不应该结束
         loop {

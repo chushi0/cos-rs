@@ -2,20 +2,23 @@ use core::num::NonZeroU64;
 
 use alloc::vec::Vec;
 
-use crate::multitask::{
-    self,
-    process::{ProcessMemoryError, ProcessPageType},
+use crate::{
+    multitask::{
+        self,
+        process::{Process, ProcessMemoryError, ProcessPageType},
+    },
+    sync::spin::SpinLock,
 };
 
-pub struct ElfLoader {
-    process_id: u64,
+pub struct ElfLoader<'loader> {
+    process: &'loader SpinLock<Process>,
     allocated_page: Vec<(u64, u64)>,
 }
 
-impl ElfLoader {
-    pub fn new(process_id: u64) -> Self {
+impl<'loader> ElfLoader<'loader> {
+    pub fn new(process: &'loader SpinLock<Process>) -> Self {
         Self {
-            process_id,
+            process,
             allocated_page: Vec::new(),
         }
     }
@@ -39,7 +42,7 @@ impl From<ProcessMemoryError> for ElfLoaderError {
     }
 }
 
-impl elf::Loader for ElfLoader {
+impl elf::Loader for ElfLoader<'_> {
     type LoaderError = ElfLoaderError;
 
     async fn alloc_static(
@@ -77,7 +80,7 @@ impl elf::Loader for ElfLoader {
             new_addr += 0x1000;
             size = size.saturating_sub(0x1000);
         }
-        
+
         if size == 0 {
             return Ok(());
         }
@@ -91,8 +94,7 @@ impl elf::Loader for ElfLoader {
             ProcessPageType::StaticConst(vaddr)
         };
         let size = (size + 0xfff) & !0xfff;
-        if multitask::process::create_process_page(self.process_id, size as usize, page_type)
-            .is_none()
+        if multitask::process::create_process_page(self.process, size as usize, page_type).is_none()
         {
             return Err(ElfLoaderError::AllocFail);
         }
@@ -110,7 +112,7 @@ impl elf::Loader for ElfLoader {
 
         unsafe {
             multitask::process::write_user_process_memory_bytes(
-                self.process_id,
+                self.process,
                 addr,
                 0,
                 len as usize,
@@ -130,7 +132,7 @@ impl elf::Loader for ElfLoader {
 
         unsafe {
             multitask::process::write_user_process_memory(
-                self.process_id,
+                self.process,
                 addr,
                 data.as_ptr(),
                 data.len(),

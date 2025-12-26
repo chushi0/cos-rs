@@ -89,11 +89,10 @@ pub enum ProcessPageType {
 ///
 /// size 必须对齐4K
 pub fn create_process_page(
-    process_id: u64,
+    process: &SpinLock<Process>,
     size: usize,
     page_type: ProcessPageType,
 ) -> Option<NonZeroU64> {
-    let process = get_process(process_id)?;
     let _guard = IrqGuard::cli();
     let page_table = process.lock().page_table;
     let virtual_ptr = memory::physics::alloc_mapped_frame(
@@ -123,14 +122,11 @@ pub enum ProcessMemoryError {
 
 /// 向进程空间写入内存
 pub unsafe fn write_user_process_memory(
-    process_id: u64,
+    process: &SpinLock<Process>,
     addr: u64,
     src: *const u8,
     len: usize,
 ) -> Result<(), ProcessMemoryError> {
-    let Some(process) = get_process(process_id) else {
-        return Err(ProcessMemoryError::ProcessNotFound);
-    };
     let page_table = {
         let _guard = IrqGuard::cli();
         process.lock().page_table
@@ -145,29 +141,21 @@ pub unsafe fn write_user_process_memory(
 }
 
 pub unsafe fn write_user_process_memory_struct<T>(
-    process_id: u64,
+    process: &SpinLock<Process>,
     addr: u64,
     src: &T,
 ) -> Result<(), ProcessMemoryError> {
     unsafe {
-        write_user_process_memory(
-            process_id,
-            addr,
-            src as *const T as *const u8,
-            size_of::<T>(),
-        )
+        write_user_process_memory(process, addr, src as *const T as *const u8, size_of::<T>())
     }
 }
 
 pub unsafe fn write_user_process_memory_bytes(
-    process_id: u64,
+    process: &SpinLock<Process>,
     addr: u64,
     byte: u8,
     len: usize,
 ) -> Result<(), ProcessMemoryError> {
-    let Some(process) = get_process(process_id) else {
-        return Err(ProcessMemoryError::ProcessNotFound);
-    };
     let page_table = {
         let _guard = IrqGuard::cli();
         process.lock().page_table
@@ -183,14 +171,11 @@ pub unsafe fn write_user_process_memory_bytes(
 
 /// 从进程空间读取内存
 pub unsafe fn read_user_process_memory(
-    process_id: u64,
+    process: &SpinLock<Process>,
     addr: u64,
     dst: *mut u8,
     len: usize,
 ) -> Result<(), ProcessMemoryError> {
-    let Some(process) = get_process(process_id) else {
-        return Err(ProcessMemoryError::ProcessNotFound);
-    };
     let page_table = {
         let _guard = IrqGuard::cli();
         process.lock().page_table
@@ -205,11 +190,11 @@ pub unsafe fn read_user_process_memory(
 }
 
 pub unsafe fn read_user_process_memory_struct<T>(
-    process_id: u64,
+    process: &SpinLock<Process>,
     addr: u64,
     dst: &mut T,
 ) -> Result<(), ProcessMemoryError> {
-    unsafe { read_user_process_memory(process_id, addr, dst as *mut T as *mut u8, size_of::<T>()) }
+    unsafe { read_user_process_memory(process, addr, dst as *mut T as *mut u8, size_of::<T>()) }
 }
 
 /// 创建用户进程
@@ -217,7 +202,7 @@ pub unsafe fn read_user_process_memory_struct<T>(
 /// 指定可执行文件路径，将加载指定可执行文件到用户空间，然后创建其主线程并运行代码
 ///
 /// TODO: 需要优化失败路径的资源回收
-pub async fn create_user_process(exe: &str) -> Option<u64> {
+pub async fn create_user_process(exe: &str) -> Option<Arc<SpinLock<Process>>> {
     // 打开可执行文件
     let path = PathBuf::from_str(exe).ok()?;
     let fs = {
@@ -241,7 +226,7 @@ pub async fn create_user_process(exe: &str) -> Option<u64> {
         file.close().await.ok()?;
         return None;
     };
-    let mut loader = ElfLoader::new(process_id);
+    let mut loader = ElfLoader::new(&process);
     if elf.load(&mut loader).await.is_err() {
         file.close().await.ok()?;
         return None;
@@ -251,12 +236,12 @@ pub async fn create_user_process(exe: &str) -> Option<u64> {
     file.close().await.ok()?;
 
     // 主线程栈
-    let stack_page = create_process_page(process_id, 0x1000, ProcessPageType::Stack)?;
+    let stack_page = create_process_page(&process, 0x1000, ProcessPageType::Stack)?;
 
     // 写入启动地址
     // TODO: 应当写入内核页
     unsafe {
-        if write_user_process_memory_struct(process_id, stack_page.get() + 0x1000 - 8, &entry_point)
+        if write_user_process_memory_struct(&process, stack_page.get() + 0x1000 - 8, &entry_point)
             .is_err()
         {
             return None;
@@ -273,7 +258,7 @@ pub async fn create_user_process(exe: &str) -> Option<u64> {
         );
     }
 
-    Some(process_id)
+    Some(process)
 }
 
 // 用户线程入口点
