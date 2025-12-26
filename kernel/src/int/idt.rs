@@ -3,7 +3,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use crate::int::{hard, soft};
+use crate::int::{hard, soft, tss};
 
 /// 中断描述符表
 #[repr(transparent)]
@@ -113,6 +113,7 @@ pub(super) unsafe fn init() {
         MAIN_CPU_IDT[Idt::INDEX_INVALID_OPCODE].set_function_pointer(soft::invalid_opcode);
         MAIN_CPU_IDT[Idt::INDEX_INVALID_OPCODE].enable();
         MAIN_CPU_IDT[Idt::INDEX_DOUBLE_FAULT].set_function_pointer(soft::double_fault);
+        MAIN_CPU_IDT[Idt::INDEX_DOUBLE_FAULT].set_stack_index(tss::DF_IST);
         MAIN_CPU_IDT[Idt::INDEX_DOUBLE_FAULT].enable();
         MAIN_CPU_IDT[Idt::INDEX_INVALID_TSS].set_function_pointer(soft::invalid_tss);
         MAIN_CPU_IDT[Idt::INDEX_INVALID_TSS].enable();

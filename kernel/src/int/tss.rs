@@ -21,16 +21,26 @@ struct TaskStateSegment {
     iopb: u16,
 }
 
+#[repr(C, align(4096))]
+struct IST([u8; 4096]);
+
 const _: () = {
     assert!(size_of::<TaskStateSegment>() == 0x68);
+    assert!(size_of::<IST>() == 0x1000);
 };
 
+pub const DF_IST: u8 = 1;
+
 static mut MAIN_CPU_TSS: TaskStateSegment = TaskStateSegment::null();
+static MAIN_CPU_IST: IST = IST([0; 4096]);
 
 pub(super) unsafe fn init() {
     unsafe {
         // 设置iopb
         MAIN_CPU_TSS.iopb = size_of::<TaskStateSegment>() as u16;
+
+        // 设置DF IST
+        MAIN_CPU_TSS.ist[DF_IST as usize - 1] = MAIN_CPU_IST.0.as_ptr() as u64 + MAIN_CPU_IST.0.len() as u64;
 
         // 获取gdt
         let mut gdt_desc = MaybeUninit::<DescriptorTablePointer>::zeroed().assume_init();
