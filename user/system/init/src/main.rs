@@ -7,17 +7,12 @@ use cos_sys::multitask::{create_process, exit, wait_process};
 
 #[unsafe(export_name = "_start")]
 fn main() -> ! {
-    let mut count = 0;
-    while count < 10 {
-        let handle = create_process("/system/shell").expect("failed to start shell process");
-        let code = wait_process(handle).expect("failed to wait for shell process");
-        if code != 0 {
-            panic!("shell process exit with code {code}");
-        }
-        count += 1;
+    let handle = create_process("/system/shell").expect("failed to start shell process");
+    let code = wait_process(handle).expect("failed to wait for shell process");
+    if code != 0 {
+        panic!("shell process exit with code {code}");
     }
-
-    panic!("shell exit too many times");
+    panic!("shell exit");
 }
 
 #[panic_handler]

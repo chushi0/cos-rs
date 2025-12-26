@@ -256,10 +256,12 @@ impl<'a> Future for SemaphoreAcquireFuture<'a> {
         match &self.waker {
             Some(waker) => {
                 if waker.status.load(Ordering::Acquire) == SemaphoreWaker::STATUS_ACQUIRED {
-                    Poll::Ready(SemaphoreGuard {
+                    let guard = SemaphoreGuard {
                         semaphore: self.semaphore,
                         permits: self.permits,
-                    })
+                    };
+                    self.permits = 0;
+                    Poll::Ready(guard)
                 } else {
                     Poll::Pending
                 }

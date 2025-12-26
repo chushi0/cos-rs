@@ -21,7 +21,7 @@ fn main() -> ! {
         // 特殊char处理
         match char {
             b'\n' => {
-                put_char(0x1B).expect("failed to new line");
+                put_char(b'\n').expect("failed to new line");
                 let should_exit = process_command(&buffer[..len]);
                 if should_exit {
                     break;
@@ -30,9 +30,11 @@ fn main() -> ! {
                 print(b"> ");
                 continue;
             }
-            0x1B => {
-                put_char(0x1B).expect("failed to back char");
-                len -= 1;
+            0x08 => {
+                if len > 0 {
+                    print(&[0x08, b' ', 0x08]);
+                    len -= 1;
+                }
                 continue;
             }
             _ => (),
@@ -51,10 +53,31 @@ fn main() -> ! {
 }
 
 fn process_command(cmd: &[u8]) -> bool {
+    if cmd.len() == 0 {
+        return false;
+    }
+
+    if cmd == b"help" {
+        print(b"COS Shell Helper:\n");
+        print(b"  help - print this message\n");
+        print(b"  exit - exit shell interactive\n");
+        print(b"         (currently this will trigger kernel panic)\n");
+        print(b"  echo <msg> - print message after `echo` words\n");
+        print(b"\n");
+        return false;
+    }
+
     if cmd == b"exit" {
         return true;
     }
-    print(b"Unsupported Command\n");
+
+    if let Some(msg) = cmd.strip_prefix(b"echo ") {
+        print(msg);
+        print(b"\n");
+        return false;
+    }
+
+    print(b"Unsupported Command, type `help` to see help message.\n\n");
     false
 }
 

@@ -1,15 +1,15 @@
 //! spsc是单生产者、单消费者。内部使用ringbuffer和信号量实现消息传递。
-//! 
+//!
 //! 通过 [channel] 函数创建一组 [Sender] 和 [Receiver]，两个对象互相关联。
 //! 同时，内部将分配固定大小的缓冲区，供发送方与接收方传递消息。
 //! 之后，当调用 [Sender::send] 或 [Sender::try_send] 时，数据将被发送至缓冲区，并在
 //! 调用 [Receiver::recv] 或 [Receiver::try_recv] 时，数据从缓冲区移出。
-//! 
+//!
 //! 当任意一方被drop后，另一方都会收到错误，而不会永远阻塞。
 //! 当 [Sender] 被 drop 后，[Receiver] 在读完缓冲区的所有数据后，会返回错误指示发送方已丢失。
 //! 当 [Receiver] 被 drop 后，后续 [Sender] 再次发送数据时将会收到错误，指示接收方已丢失。
 //! 缓冲区中的数据将被保留，直到另一方也被drop时释放。
-//! 
+//!
 //! 虽然性能会较差，但可以将 [Sender] 包装为 [Arc<Mutex<Sender>>]，当作多生产者使用。
 //! 同样，将 [Receiver] 包装为 [Arc<Mutex<Receiver>>]，当作多消费者使用。
 
@@ -56,7 +56,7 @@ pub enum TryReceiveError {
 }
 
 /// 创建一对管道，具有大小为 size 的内部缓冲区
-/// 
+///
 /// # Panic
 /// size 至少为1
 pub fn channel<T>(size: usize) -> (Sender<T>, Receiver<T>) {
@@ -113,7 +113,7 @@ impl<T> Sender<T> {
     }
 
     /// 将数据发送至对端
-    /// 
+    ///
     /// # 取消安全
     /// 取消后，数据将不会被发送至对端，不会破坏内部状态，且可以再次调用
     pub async fn send(&mut self, data: T) -> Result<(), ReceiverLost<T>> {
@@ -166,7 +166,7 @@ impl<T> Receiver<T> {
     }
 
     /// 从缓冲区接收一个数据
-    /// 
+    ///
     /// # 取消安全
     /// 安全，取消不会破坏内部状态，且可以再次调用
     pub async fn recv(&mut self) -> Result<T, SenderLost> {
@@ -193,9 +193,15 @@ impl<T> Receiver<T> {
         }
     }
 
+    #[track_caller]
     fn recv_solt(&mut self) -> T {
         // Safety: 我们已通过信号量确认buffer的下一个solt只有我们在访问
-        let data = unsafe { self.inner.slot(self.index % self.size).take().unwrap() };
+        let data = unsafe {
+            self.inner
+                .slot(self.index % self.size)
+                .take()
+                .expect("slot is empty while call recv_solt")
+        };
         self.index += 1;
         self.inner.producer.release(1);
         data
