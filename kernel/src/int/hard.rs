@@ -240,7 +240,7 @@ interrupt_handler! {
             );
         }
 
-        kprintln!("keyboard: 0x{scan_code:x}");
+        io::keyboard::handle_keyboard_scan(scan_code);
 
         unsafe {
             send_eoi(IRQ_KEYBOARD);

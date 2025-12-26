@@ -18,6 +18,8 @@ pub mod idx;
 pub mod memory;
 pub mod multitask;
 
+pub mod debug;
+
 /// 进行系统调用
 ///
 /// 此函数使用syscall指令发起系统调用请求，CPU会将执行点移动至内核，并在内核执行结束后返回。
@@ -84,6 +86,12 @@ pub unsafe fn syscall(id: u64, p1: u64, p2: u64, p3: u64, p4: u64, p5: u64, p6: 
             in("r8") p5,
             in("r9") p6,
             lateout("rax") ret,
+            lateout("rdi") _,
+            lateout("rsi") _,
+            lateout("rdx") _,
+            lateout("r10") _,
+            lateout("r8") _,
+            lateout("r9") _,
             out("rcx") _,
             out("r11") _,
             options(nostack, preserves_flags)

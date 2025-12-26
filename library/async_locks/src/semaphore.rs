@@ -252,7 +252,7 @@ impl Drop for SemaphoreGuard<'_> {
 impl<'a> Future for SemaphoreAcquireFuture<'a> {
     type Output = SemaphoreGuard<'a>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match &self.waker {
             Some(waker) => {
                 if waker.status.load(Ordering::Acquire) == SemaphoreWaker::STATUS_ACQUIRED {
@@ -275,7 +275,9 @@ impl<'a> Future for SemaphoreAcquireFuture<'a> {
                     permits: self.permits,
                 });
 
-                self.semaphore.queue(waker);
+                self.semaphore.queue(waker.clone());
+
+                self.waker = Some(waker);
 
                 // 立即触发一次队列检查
                 self.semaphore.release(0);

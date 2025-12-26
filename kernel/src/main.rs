@@ -48,6 +48,11 @@ pub unsafe extern "C" fn kmain(
     // 初始化IDLE线程
     multitask::thread::create_idle_thread();
 
+    // 初始化键盘
+    unsafe {
+        io::keyboard::init();
+    }
+
     multitask::async_rt::spawn(async move {
         // 初始化磁盘
         if io::disk::init_disk(startup_disk as u8).await.is_err() {

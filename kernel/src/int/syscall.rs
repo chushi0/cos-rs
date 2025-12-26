@@ -1,12 +1,13 @@
 use core::{
     arch::{asm, naked_asm},
     cmp::Ordering,
+    mem::MaybeUninit,
 };
 
 use alloc::sync::Arc;
 
 use crate::{
-    kprintln, memory, multitask,
+    io, kprint, kprintln, memory, multitask,
     sync::{int::IrqGuard, percpu},
     user::handle::HandleObject,
 };
@@ -161,7 +162,21 @@ extern "C" fn syscall_entry() {
 
 type SyscallEntry = (u64, u64, extern "C" fn(u64, u64, u64, u64, u64) -> u64);
 const SYSCALL_HANDLER: &[SyscallEntry] = &[
-    (0, 0, syscall_test),
+    (
+        cos_sys::idx::IDX_DEBUG,
+        cos_sys::idx::IDX_SUB_DEBUG_INFO,
+        syscall_test,
+    ),
+    (
+        cos_sys::idx::IDX_DEBUG,
+        cos_sys::idx::IDX_SUB_DEBUG_GET_CHAR,
+        syscall_debug_get_char,
+    ),
+    (
+        cos_sys::idx::IDX_DEBUG,
+        cos_sys::idx::IDX_SUB_DEBUG_PUT_CHAR,
+        syscall_debug_put_char,
+    ),
     (
         cos_sys::idx::IDX_EXIT,
         cos_sys::idx::IDX_SUB_EXIT_PROCESS,
@@ -333,6 +348,62 @@ macro_rules! syscall_handler {
 syscall_handler! {
     fn syscall_test() {
         kprintln!("syscall test pass");
+    }
+}
+
+syscall_handler! {
+    fn syscall_debug_get_char(char_ptr: u64) -> u64 {
+        if !memory::physics::is_user_space_virtual_memory(char_ptr as usize) {
+            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+        }
+
+        let thread_id = percpu::get_current_thread_id();
+        let process_id = {
+            let _guard = IrqGuard::cli();
+            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
+        };
+        let process = multitask::process::get_process(process_id).unwrap();
+
+        let receiver = io::keyboard::receiver();
+        let char = multitask::async_rt::block_on(async {
+            receiver.lock().await.recv().await.unwrap()
+        });
+
+        unsafe {
+            if multitask::process::write_user_process_memory_struct(&process, char_ptr, &char).is_err() {
+                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            }
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn syscall_debug_put_char(char_ptr: u64) -> u64 {
+        if !memory::physics::is_user_space_virtual_memory(char_ptr as usize) {
+            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+        }
+
+        let thread_id = percpu::get_current_thread_id();
+        let process_id = {
+            let _guard = IrqGuard::cli();
+            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
+        };
+        let process = multitask::process::get_process(process_id).unwrap();
+
+        let char: u8;
+        unsafe {
+            let mut uninit_char = MaybeUninit::uninit();
+            if multitask::process::read_user_process_memory_struct(&process, char_ptr, &mut uninit_char).is_err() {
+                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            }
+            char = uninit_char.assume_init();
+        };
+
+        kprint!("{}", char as char);
+
+        SYSCALL_SUCCESS
     }
 }
 

@@ -1,3 +1,8 @@
+pub const IDX_DEBUG: u64 = 0x0;
+pub const IDX_SUB_DEBUG_INFO: u64 = 0x0;
+pub const IDX_SUB_DEBUG_GET_CHAR: u64 = 0x1;
+pub const IDX_SUB_DEBUG_PUT_CHAR: u64 = 0x2;
+
 /// 用于多任务，进程或线程退出
 /// 
 /// 子编号：

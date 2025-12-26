@@ -41,11 +41,13 @@ pub struct Receiver<T> {
 
 pub struct ReceiverLost<T>(pub T);
 
+#[derive(Debug)]
 pub enum TrySendError<T> {
     BufferFull(T),
     ReceiverLost(T),
 }
 
+#[derive(Debug)]
 pub struct SenderLost;
 
 pub enum TryReceiveError {
