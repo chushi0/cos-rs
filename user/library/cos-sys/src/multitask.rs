@@ -167,7 +167,7 @@ pub fn current_process() -> Result<u64> {
 /// 指定一个可执行文件，将其加载为进程，创建主线程进入其入口点。
 /// 创建后的进程将作为当前进程的子进程。
 ///
-/// 如果成功，将返回其进程ID
+/// 如果成功，将返回其进程句柄
 pub fn create_process(exe: &str) -> Result<u64> {
     let exe_ptr = exe.as_ptr() as u64;
     let exe_len = exe.len() as u64;
@@ -187,25 +187,25 @@ pub fn create_process(exe: &str) -> Result<u64> {
 
 /// 强制停止进程
 ///
-/// 停止进程并清理其所有资源。指定的进程必须为当前进程的子进程。
-pub fn kill_process(process_id: u64) -> Result<()> {
-    let error = unsafe { syscall!(IDX_PROCESS, IDX_SUB_PROCESS_KILL, process_id) };
+/// 停止进程并清理其所有资源，并回收进程句柄
+pub fn kill_process(process_handle: u64) -> Result<()> {
+    let error = unsafe { syscall!(IDX_PROCESS, IDX_SUB_PROCESS_KILL, process_handle) };
     SyscallError::to_result(error)
 }
 
 /// 等待指定子进程退出，并获取其退出码。
 ///
-/// 指定的进程必须为当前进程的子进程。
 /// 在进程退出之后，无法再次通过此函数获取其退出码。
 /// 如果进程当前正在运行，此函数将挂起当前线程。
-pub fn wait_process(process_id: u64) -> Result<u64> {
+/// 使用此函数等待的进程退出后，句柄会被回收。
+pub fn wait_process(process_handle: u64) -> Result<u64> {
     let mut exit_code = MaybeUninit::<u64>::uninit();
     let exit_code_ptr = exit_code.as_mut_ptr() as u64;
     let error = unsafe {
         syscall!(
             IDX_PROCESS,
             IDX_SUB_PROCESS_WAIT,
-            process_id,
+            process_handle,
             exit_code_ptr
         )
     };

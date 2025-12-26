@@ -7,6 +7,7 @@ use core::{
 use alloc::{
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     sync::Arc,
+    vec::Vec,
 };
 use async_locks::watch;
 use elf::ElfFile;
@@ -20,6 +21,7 @@ use crate::{
     },
     multitask::{self, elf_loader::ElfLoader},
     sync::{int::IrqGuard, spin::SpinLock},
+    user::handle::HandleObject,
 };
 
 static PROCESSES: SpinLock<BTreeMap<u64, Arc<SpinLock<Process>>>> = SpinLock::new(BTreeMap::new());
@@ -34,9 +36,11 @@ pub struct Process {
     // 页表地址
     pub page_table: NonZeroU64,
     // 退出码
-    pub exit_code: watch::Publisher<u64>,
+    exit_code: watch::Publisher<u64>,
     // 为其他进程wait预留
     pub exit_code_sub: watch::Subscriber<u64>,
+    // 句柄
+    handles: Vec<Option<Arc<HandleObject>>>,
 }
 
 impl Drop for Process {
@@ -49,7 +53,7 @@ impl Drop for Process {
 }
 
 /// 创建进程
-pub fn create_process() -> Option<Arc<SpinLock<Process>>> {
+fn create_process() -> Option<Arc<SpinLock<Process>>> {
     // 需要申请一页内存用作四级页表
     let page_table = memory::physics::alloc_user_page_table()?;
 
@@ -61,6 +65,7 @@ pub fn create_process() -> Option<Arc<SpinLock<Process>>> {
         page_table,
         exit_code: publisher,
         exit_code_sub: subscriber,
+        handles: Vec::new(),
     };
     let process = Arc::new(SpinLock::new(process));
 
@@ -295,4 +300,28 @@ pub fn stop_process(process_id: u64) {
 
 pub fn get_exit_code_subscriber(process: &SpinLock<Process>) -> watch::Subscriber<u64> {
     process.lock().exit_code_sub.clone()
+}
+
+pub fn insert_process_handle(process: &SpinLock<Process>, handle: HandleObject) -> usize {
+    let mut process = process.lock();
+
+    for (i, slot) in process.handles.iter_mut().enumerate() {
+        if slot.is_none() {
+            *slot = Some(Arc::new(handle));
+            return i;
+        }
+    }
+
+    process.handles.push(Some(Arc::new(handle)));
+    process.handles.len() - 1
+}
+
+pub fn get_process_handle(process: &SpinLock<Process>, index: usize) -> Option<Arc<HandleObject>> {
+    process.lock().handles.get(index).cloned().flatten()
+}
+
+pub fn remove_process_handle(process: &SpinLock<Process>, index: usize) {
+    if let Some(slot) = process.lock().handles.get_mut(index) {
+        *slot = None;
+    }
 }

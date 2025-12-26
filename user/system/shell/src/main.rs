@@ -10,6 +10,7 @@ fn main() -> ! {
     unsafe {
         cos_sys::syscall!(0);
     }
+
     exit(0);
 }
 

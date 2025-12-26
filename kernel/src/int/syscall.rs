@@ -3,9 +3,12 @@ use core::{
     cmp::Ordering,
 };
 
+use alloc::sync::Arc;
+
 use crate::{
     kprintln, memory, multitask,
     sync::{int::IrqGuard, percpu},
+    user::handle::HandleObject,
 };
 
 pub(super) unsafe fn init() {
@@ -232,7 +235,7 @@ const SYSCALL_HANDLER: &[SyscallEntry] = &[
     (
         cos_sys::idx::IDX_PROCESS,
         cos_sys::idx::IDX_SUB_PROCESS_WAIT,
-        syscall_test,
+        syscall_wait_process,
     ),
 ];
 
@@ -408,10 +411,10 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_create_process(exe_ptr: u64, exe_len: u64, process_id_ptr: u64) -> u64 {
+    fn syscall_create_process(exe_ptr: u64, exe_len: u64, process_handle_ptr: u64) -> u64 {
         if !memory::physics::is_user_space_virtual_memory(exe_ptr as usize) ||
             !memory::physics::is_user_space_virtual_memory((exe_ptr + exe_len) as usize) ||
-            !memory::physics::is_user_space_virtual_memory(process_id_ptr as usize) {
+            !memory::physics::is_user_space_virtual_memory(process_handle_ptr as usize) {
                 return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
@@ -436,20 +439,70 @@ syscall_handler! {
                 return;
             };
 
-            if let Some(pid) = multitask::process::create_user_process(exe_str).await {
-                sender.send(Ok(pid)).await;
+            if let Some(process) = multitask::process::create_user_process(exe_str).await {
+                sender.send(Ok(process)).await;
             } else {
                 sender.send(Err(cos_sys::error::ErrorKind::Unknown)).await; // TODO: 占位，应当返回具体错误类型
             }
         });
 
-        let pid = match multitask::async_rt::block_on(receiver.recv()).unwrap() {
-            Ok(pid) => pid,
+        let created_process = match multitask::async_rt::block_on(receiver.recv()).unwrap() {
+            Ok(process) => process,
             Err(err) => return err as u64,
         };
 
+        let handle = HandleObject::Process {
+            process: Arc::downgrade(&created_process),
+            exit: multitask::process::get_exit_code_subscriber(&created_process),
+        };
+
+        let handle = multitask::process::insert_process_handle(&process, handle) as u64;
+
         unsafe {
-            if multitask::process::write_user_process_memory_struct(&process, process_id_ptr, &pid).is_err() {
+            if multitask::process::write_user_process_memory_struct(&process, process_handle_ptr, &handle).is_err() {
+                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            }
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn syscall_wait_process(process_handle: u64, exit_code_ptr: u64) -> u64 {
+        if !memory::physics::is_user_space_virtual_memory(exit_code_ptr as usize) {
+            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+        }
+
+        let thread_id = percpu::get_current_thread_id();
+        let process_id = {
+            let _guard = IrqGuard::cli();
+            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
+        };
+        let process = multitask::process::get_process(process_id).unwrap();
+
+        let Some(handle) = multitask::process::get_process_handle(&process, process_handle as usize) else {
+            return cos_sys::error::ErrorKind::BadArgument as u64;
+        };
+
+        let HandleObject::Process { exit, .. } = &*handle else {
+            return cos_sys::error::ErrorKind::BadArgument as u64;
+        };
+
+        let mut exit = exit.clone();
+        multitask::async_rt::block_on(async {
+            loop {
+                if exit.wait().await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        multitask::process::remove_process_handle(&process, process_handle as usize);
+
+        let code = *exit.borrow();
+        unsafe {
+            if multitask::process::write_user_process_memory_struct(&process, exit_code_ptr, &code).is_err() {
                 return cos_sys::error::ErrorKind::SegmentationFault as u64;
             }
         }

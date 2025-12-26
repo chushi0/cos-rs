@@ -725,23 +725,36 @@ unsafe fn remove_kernel_memory_page(virtual_memory: usize) {
 
     // 2级页表
     let pd_addr = pdpt_entry.address() as usize;
-    let mut pd = unsafe {
-        let mut pd = MaybeUninit::<PageTable>::uninit();
-        read_memory(pd_addr, &mut pd);
-        pd.assume_init()
-    };
+    let mut pd_entry = PageEntry(0);
+    unsafe {
+        read_memory(
+            pd_addr + pd_index * size_of::<PageEntry>(),
+            &mut pd_entry,
+        );
+    }
 
     // 1级页表
-    let pt_addr = pd[pd_index].address() as usize;
-    let mut pt = unsafe {
-        let mut pt = MaybeUninit::<PageTable>::uninit();
-        read_memory(pt_addr, &mut pt);
-        pt.assume_init()
-    };
+    let pt_addr = pd_entry.address() as usize;
 
     // 移除页表，同时检查当前页表是否全部移除，以移除页表自身对应内存
-    pt[pt_index].0 = 0;
-    let pt_removed_all = pt.iter().all(|entry| !entry.present());
+    let zero_entry = PageEntry(0);
+    unsafe {
+        write_memory(
+            pt_addr + pt_index * size_of::<PageEntry>(),
+            &zero_entry,
+        );
+    }
+    let mut pt_removed_all = true;
+    for i in 0..512 {
+        let mut entry = PageEntry(0);
+        unsafe {
+            read_memory(pt_addr + i * size_of::<PageEntry>(), &mut entry);
+        }
+        if entry.present() {
+            pt_removed_all = false;
+            break;
+        }
+    }
     if pt_removed_all {
         if let Some(addr) = NonZero::new(pt_addr) {
             unsafe {
@@ -749,9 +762,23 @@ unsafe fn remove_kernel_memory_page(virtual_memory: usize) {
             }
         }
 
-        pd[pd_index].0 = 0;
-
-        let pd_removed_all = pd.iter().all(|entry| !entry.present());
+        unsafe {
+            write_memory(
+                pd_addr + pd_index * size_of::<PageEntry>(),
+                &zero_entry,
+            );
+        }
+        let mut pd_removed_all = true;
+        for i in 0..512 {
+            let mut entry = PageEntry(0);
+            unsafe {
+                read_memory(pd_addr + i * size_of::<PageEntry>(), &mut entry);
+            }
+            if entry.present() {
+                pd_removed_all = false;
+                break;
+            }
+        }
         if pd_removed_all {
             if let Some(addr) = NonZero::new(pd_addr) {
                 unsafe {
@@ -760,14 +787,6 @@ unsafe fn remove_kernel_memory_page(virtual_memory: usize) {
             }
 
             pdpt_entry.0 = 0;
-        } else {
-            unsafe {
-                write_memory(pd_addr + pd_index * size_of::<PageEntry>(), &pd[pd_index]);
-            }
-        }
-    } else {
-        unsafe {
-            write_memory(pt_addr + pt_index * size_of::<PageEntry>(), &pt[pt_index]);
         }
     }
 
