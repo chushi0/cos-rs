@@ -14,6 +14,7 @@
 use core::arch::asm;
 
 pub mod error;
+pub mod file;
 pub mod idx;
 pub mod memory;
 pub mod multitask;

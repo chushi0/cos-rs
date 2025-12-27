@@ -3,14 +3,18 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(test_runner)]
 
+extern crate rlibc;
+
 use cos_sys::{
     debug::{get_char, put_char},
+    file::{close, open, read},
     multitask::exit,
 };
 
 #[unsafe(export_name = "_start")]
 fn main() -> ! {
-    print(b"Welcome to COS shell!\n> ");
+    print_welcome_file();
+    print(b"\n> ");
 
     let mut buffer = [0u8; 70];
     let mut len = 0;
@@ -85,6 +89,19 @@ fn print(string: &[u8]) {
     for &ch in string {
         put_char(ch).expect("failed to print string");
     }
+}
+
+fn print_welcome_file() {
+    let file = open(b"/system/welcome.txt").unwrap();
+    let mut buffer = [0u8; 512];
+    loop {
+        let read_count = read(file, buffer.as_mut_slice()).unwrap() as usize;
+        if read_count == 0 {
+            break;
+        }
+        print(&buffer[..read_count]);
+    }
+    close(file).unwrap();
 }
 
 #[panic_handler]

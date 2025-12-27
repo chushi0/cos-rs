@@ -322,6 +322,14 @@ fn build_image() {
         block_on(file.close()).expect("failed to close file");
     }
 
+    let welcome_path = filesystem::path::PathBuf::from_str("/system/welcome.txt")
+        .expect("failed to create welcome path");
+    block_on(fs.create_file(welcome_path.as_path())).expect("failed to create file");
+    let mut file = block_on(fs.open_file(welcome_path.as_path())).expect("failed to open file");
+    let welcome = b"Welcome to COS shell!\nThis welcome message is from /system/welcome.txt!\n";
+    block_on(file.write(welcome)).expect("failed to write to file");
+    block_on(file.close()).expect("failed to close file");
+
     block_on(fs.unmount()).expect("failed to unmount formatted file system for disk.img");
 }
 

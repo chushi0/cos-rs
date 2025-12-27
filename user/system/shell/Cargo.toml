@@ -1,7 +1,8 @@
 [package]
+edition = "2024"
 name = "shell"
 version = "0.1.0"
-edition = "2024"
 
 [dependencies]
 cos-sys = {path = "../../library/cos-sys"}
+rlibc = "1.0.0"
