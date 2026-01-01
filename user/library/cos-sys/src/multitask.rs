@@ -2,8 +2,7 @@ use core::{mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
     error::{Result, SyscallError},
-    idx::*,
-    syscall,
+    idx, syscall,
 };
 
 pub const EXIT_SUCCESS: u64 = 0;
@@ -18,7 +17,7 @@ pub const EXIT_KILL: u64 = 1;
 /// 一般来说，使用 [EXIT_SUCCESS] 表示正常退出，而其他所有退出码表示异常退出。
 pub fn exit(code: u64) -> ! {
     unsafe {
-        syscall!(IDX_EXIT, IDX_SUB_EXIT_PROCESS, code);
+        syscall!(idx::IDX_EXIT_PROCESS, code);
     }
     unreachable!()
 }
@@ -34,7 +33,7 @@ pub fn exit(code: u64) -> ! {
 /// 如果线程退出后，进程内没有其他线程，则会退出进程。最后一个线程的退出码为进程的退出码。
 pub fn exit_thread(code: u64) -> ! {
     unsafe {
-        syscall!(IDX_EXIT, IDX_SUB_EXIT_THREAD, code);
+        syscall!(idx::IDX_EXIT_THREAD, code);
     }
     unreachable!()
 }
@@ -45,7 +44,7 @@ pub fn exit_thread(code: u64) -> ! {
 pub fn current_thread() -> Result<u64> {
     let mut thread_id = MaybeUninit::<u64>::uninit();
     let thread_id_ptr = thread_id.as_mut_ptr() as u64;
-    let error = unsafe { syscall!(IDX_THREAD, IDX_SUB_THREAD_CURRENT, thread_id_ptr) };
+    let error = unsafe { syscall!(idx::IDX_THREAD_CURRENT, thread_id_ptr) };
     SyscallError::to_result(error).map(|_| unsafe { thread_id.assume_init() })
 }
 
@@ -56,7 +55,7 @@ pub fn current_thread() -> Result<u64> {
 ///
 /// 线程被手动挂起后，除非调用[resume_thread]，否则永不执行。
 pub fn suspend_thread(thread_id: u64) -> Result {
-    let error = unsafe { syscall!(IDX_THREAD, IDX_SUB_THREAD_SUSPEND, thread_id) };
+    let error = unsafe { syscall!(idx::IDX_THREAD_SUSPEND, thread_id) };
     SyscallError::to_result(error)
 }
 
@@ -67,7 +66,7 @@ pub fn suspend_thread(thread_id: u64) -> Result {
 ///
 /// 如果目标线程不是手动挂起的线程，则返回 [crate::error::ErrorKind::PermissionDenied]
 pub fn resume_thread(thread_id: u64) -> Result {
-    let error = unsafe { syscall!(IDX_THREAD, IDX_SUB_THREAD_RESUME, thread_id) };
+    let error = unsafe { syscall!(idx::IDX_THREAD_RESUME, thread_id) };
     SyscallError::to_result(error)
 }
 
@@ -79,7 +78,7 @@ pub fn resume_thread(thread_id: u64) -> Result {
 /// 对于用户程序而言，避免使用这种方式停止线程，因为它不能保证线程在何时被停止，
 /// 线程可能来不及回收其资源。
 pub fn kill_thread(thread_id: u64) -> Result {
-    let error = unsafe { syscall!(IDX_THREAD, IDX_SUB_THREAD_KILL, thread_id) };
+    let error = unsafe { syscall!(idx::IDX_THREAD_KILL, thread_id) };
     SyscallError::to_result(error)
 }
 
@@ -140,8 +139,7 @@ pub unsafe fn create_thread(
     let new_thread_id_ptr = new_thread_id.as_mut_ptr() as u64;
     let error = unsafe {
         syscall!(
-            IDX_THREAD,
-            IDX_SUB_THREAD_CREATE,
+            idx::IDX_THREAD_CREATE,
             new_rip,
             new_rsp,
             params,
@@ -158,7 +156,7 @@ pub unsafe fn create_thread(
 pub fn current_process() -> Result<u64> {
     let mut process_id = MaybeUninit::<u64>::uninit();
     let process_id_ptr = process_id.as_mut_ptr() as u64;
-    let error = unsafe { syscall!(IDX_PROCESS, IDX_SUB_PROCESS_CURRENT, process_id_ptr) };
+    let error = unsafe { syscall!(idx::IDX_PROCESS_CURRENT, process_id_ptr) };
     SyscallError::to_result(error).map(|_| unsafe { process_id.assume_init() })
 }
 
@@ -173,15 +171,7 @@ pub fn create_process(exe: &str) -> Result<u64> {
     let exe_len = exe.len() as u64;
     let mut process_id = MaybeUninit::<u64>::uninit();
     let process_id_ptr = process_id.as_mut_ptr() as u64;
-    let error = unsafe {
-        syscall!(
-            IDX_PROCESS,
-            IDX_SUB_PROCESS_CREATE,
-            exe_ptr,
-            exe_len,
-            process_id_ptr
-        )
-    };
+    let error = unsafe { syscall!(idx::IDX_PROCESS_CREATE, exe_ptr, exe_len, process_id_ptr) };
     SyscallError::to_result(error).map(|_| unsafe { process_id.assume_init() })
 }
 
@@ -189,7 +179,7 @@ pub fn create_process(exe: &str) -> Result<u64> {
 ///
 /// 停止进程并清理其所有资源，并回收进程句柄
 pub fn kill_process(process_handle: u64) -> Result<()> {
-    let error = unsafe { syscall!(IDX_PROCESS, IDX_SUB_PROCESS_KILL, process_handle) };
+    let error = unsafe { syscall!(idx::IDX_PROCESS_KILL, process_handle) };
     SyscallError::to_result(error)
 }
 
@@ -201,13 +191,6 @@ pub fn kill_process(process_handle: u64) -> Result<()> {
 pub fn wait_process(process_handle: u64) -> Result<u64> {
     let mut exit_code = MaybeUninit::<u64>::uninit();
     let exit_code_ptr = exit_code.as_mut_ptr() as u64;
-    let error = unsafe {
-        syscall!(
-            IDX_PROCESS,
-            IDX_SUB_PROCESS_WAIT,
-            process_handle,
-            exit_code_ptr
-        )
-    };
+    let error = unsafe { syscall!(idx::IDX_PROCESS_WAIT, process_handle, exit_code_ptr) };
     SyscallError::to_result(error).map(|_| unsafe { exit_code.assume_init() })
 }

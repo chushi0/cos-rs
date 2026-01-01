@@ -2,8 +2,7 @@ use core::{mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
     error::{Result, SyscallError},
-    idx::*,
-    syscall,
+    idx, syscall,
 };
 
 /// 申请内存页
@@ -15,7 +14,7 @@ use crate::{
 pub fn alloc_page(count: u64) -> Result<NonNull<u8>> {
     let mut addr = MaybeUninit::<u64>::uninit();
     let addr_ptr = addr.as_mut_ptr() as u64;
-    let error = unsafe { syscall!(IDX_MEMORY, IDX_SUB_MEMORY_ALLOC, count, addr_ptr) };
+    let error = unsafe { syscall!(idx::IDX_MEMORY_ALLOC, count, addr_ptr) };
     SyscallError::to_result(error)
         .map(|_| unsafe { NonNull::new_unchecked(addr.assume_init() as *mut u8) })
 }
@@ -27,7 +26,7 @@ pub fn alloc_page(count: u64) -> Result<NonNull<u8>> {
 /// 然后多次分批回收。
 pub unsafe fn free_page(ptr: NonNull<u8>, count: u64) -> Result {
     let ptr = ptr.as_ptr() as u64;
-    let error = unsafe { syscall!(IDX_MEMORY, IDX_SUB_MEMORY_FREE, ptr, count) };
+    let error = unsafe { syscall!(idx::IDX_MEMORY_FREE, ptr, count) };
     SyscallError::to_result(error)
 }
 
@@ -96,21 +95,21 @@ const _: () = {
 /// 检查指定地址所在的内存页是否可读、可写或可执行。
 /// 即便传入进程无法访问的内存（未映射内存、内核内存、保留内存等），此函数也不会产生未定义行为，
 /// 而是以不可读、不可写、不可执行的方式返回。
-/// 
+///
 /// 测试内存页仅限于当前进程，程序无法访问其他进程和内核内存。
 pub fn test_page(ptr: NonNull<u8>) -> Result<PageAccessible> {
     let ptr = ptr.as_ptr() as u64;
     let mut status = MaybeUninit::<u64>::uninit();
     let status_ptr = status.as_mut_ptr() as u64;
-    let error = unsafe { syscall!(IDX_MEMORY, IDX_SUB_MEMORY_TEST, ptr, status_ptr) };
+    let error = unsafe { syscall!(idx::IDX_MEMORY_TEST, ptr, status_ptr) };
     SyscallError::to_result(error).map(|_| unsafe { PageAccessible(status.assume_init()) })
 }
 
 /// 修改内存页读写权限
-/// 
+///
 /// 修改内存页仅限于当前进程，程序无法访问其他进程和内核内存。
 pub unsafe fn modify_page(ptr: NonNull<u8>, status: PageAccessible) -> Result {
     let ptr = ptr.as_ptr() as u64;
-    let error = unsafe { syscall!(IDX_MEMORY, IDX_SUB_MEMORY_TEST, ptr, status.0) };
+    let error = unsafe { syscall!(idx::IDX_MEMORY_TEST, ptr, status.0) };
     SyscallError::to_result(error)
 }
