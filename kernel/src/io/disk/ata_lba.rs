@@ -14,6 +14,7 @@ use filesystem::{
 use crate::sync::{int::IrqGuard, spin::SpinLock};
 
 /// 全局等待队列
+/// (inflight, queue)
 static ATA_QUEUE: SpinLock<(Option<SyncRequest>, VecDeque<SyncRequest>)> =
     SpinLock::new((None, VecDeque::new()));
 
@@ -57,18 +58,29 @@ enum Operation {
     Write,
 }
 
-struct WriteBlockFuture<'a> {
-    driver: &'a AtaLbaDriver,
-    block_index: u64,
-    buf: &'a [u8],
-    requset: Option<SyncRequest>,
+enum WriteBlockFuture<'a> {
+    Init {
+        driver: &'a AtaLbaDriver,
+        block_index: u64,
+        buf: &'a [u8],
+    },
+    WaitDevice {
+        request: SyncRequest,
+    },
+    Done,
 }
 
-struct ReadBlockFuture<'a> {
-    driver: &'a AtaLbaDriver,
-    block_index: u64,
-    buf: &'a mut [u8],
-    requset: Option<SyncRequest>,
+enum ReadBlockFuture<'a> {
+    Init {
+        driver: &'a AtaLbaDriver,
+        block_index: u64,
+        buf: &'a mut [u8],
+    },
+    WaitDevice {
+        buf: &'a mut [u8],
+        request: SyncRequest,
+    },
+    Done,
 }
 
 impl AtaLbaDriver {
@@ -99,11 +111,10 @@ impl BlockDevice for AtaLbaDriver {
         block_index: u64,
         buf: &'fut [u8],
     ) -> BoxFuture<'fut, Result<(), BlockDeviceError>> {
-        Box::pin(WriteBlockFuture {
+        Box::pin(WriteBlockFuture::Init {
             driver: self,
             block_index,
             buf,
-            requset: None,
         })
     }
 
@@ -112,11 +123,10 @@ impl BlockDevice for AtaLbaDriver {
         block_index: u64,
         buf: &'fut mut [u8],
     ) -> BoxFuture<'fut, Result<(), BlockDeviceError>> {
-        Box::pin(ReadBlockFuture {
+        Box::pin(ReadBlockFuture::Init {
             driver: self,
             block_index,
             buf,
-            requset: None,
         })
     }
 }
@@ -125,47 +135,62 @@ impl Future for WriteBlockFuture<'_> {
     type Output = Result<(), BlockDeviceError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.requset.as_ref() {
-            Some(request) => {
-                let _guard = IrqGuard::cli();
-                let request = request.lock();
-                if request.status != Request::STATUS_OK {
-                    return Poll::Pending;
-                }
-                if request.error {
-                    Poll::Ready(Err(BlockDeviceError::IoError))
-                } else {
-                    Poll::Ready(Ok(()))
-                }
-            }
-            None => {
-                assert!(self.buf.len() == 512);
-                let mut buffer = alloc::vec![0u16; 256];
-                unsafe {
-                    copy_nonoverlapping(self.buf.as_ptr(), buffer.as_mut_ptr() as *mut u8, 512);
-                }
-                let request = Request {
-                    disk: self.driver.disk,
-                    lba: self.block_index,
-                    waker: cx.waker().clone(),
-                    status: Request::STATUS_PENDING,
-                    operate: Operation::Write,
-                    buffer,
-                    error: false,
-                };
-                let request = Arc::new(SpinLock::new(request));
-                self.as_mut().requset = Some(request.clone());
+        loop {
+            match self.as_mut().get_mut() {
+                Self::Init {
+                    driver,
+                    block_index,
+                    buf,
+                } => {
+                    // 准备缓冲区
+                    assert!(buf.len() == 512);
+                    let mut buffer = alloc::vec![0u16; 256];
+                    unsafe {
+                        copy_nonoverlapping(buf.as_ptr(), buffer.as_mut_ptr() as *mut u8, 512);
+                    }
 
-                let _guard = IrqGuard::cli();
-                let mut queue = ATA_QUEUE.lock();
-                if queue.0.is_some() {
-                    queue.1.push_back(request);
-                } else {
-                    send_io_command(&request);
-                    queue.0 = Some(request);
-                }
+                    // 构造请求
+                    let request = Request {
+                        disk: driver.disk,
+                        lba: *block_index,
+                        waker: cx.waker().clone(),
+                        status: Request::STATUS_PENDING,
+                        operate: Operation::Write,
+                        buffer,
+                        error: false,
+                    };
+                    let request = Arc::new(SpinLock::new(request));
 
-                Poll::Pending
+                    // 排队
+                    let _guard = IrqGuard::cli();
+                    let mut queue = ATA_QUEUE.lock();
+                    if queue.0.is_some() {
+                        queue.1.push_back(request.clone());
+                    } else {
+                        send_io_command(&request);
+                        queue.0 = Some(request.clone());
+                    }
+                    *self.as_mut().get_mut() = Self::WaitDevice { request }
+                }
+                Self::WaitDevice { request } => {
+                    let _guard = IrqGuard::cli();
+                    let request = request.lock();
+                    if request.status != Request::STATUS_OK {
+                        return Poll::Pending;
+                    }
+
+                    let result = if request.error {
+                        Poll::Ready(Err(BlockDeviceError::IoError))
+                    } else {
+                        Poll::Ready(Ok(()))
+                    };
+
+                    drop(request);
+                    *self.as_mut().get_mut() = Self::Done;
+
+                    return result;
+                }
+                Self::Done => panic!("future polled after complete"),
             }
         }
     }
@@ -175,56 +200,72 @@ impl Future for ReadBlockFuture<'_> {
     type Output = Result<(), BlockDeviceError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.requset.clone() {
-            Some(request) => {
-                let _guard = IrqGuard::cli();
-                let request = request.lock();
-                if request.status != Request::STATUS_OK {
-                    return Poll::Pending;
-                }
-                if request.error {
-                    Poll::Ready(Err(BlockDeviceError::IoError))
-                } else {
-                    unsafe {
-                        copy_nonoverlapping(
-                            request.buffer.as_ptr() as *const u8,
-                            self.buf.as_mut_ptr(),
-                            512,
-                        );
+        loop {
+            match self.as_mut().get_mut() {
+                Self::Init {
+                    driver,
+                    block_index,
+                    buf,
+                } => {
+                    // 构造请求
+                    assert!(buf.len() == 512);
+                    let request = Request {
+                        disk: driver.disk,
+                        lba: *block_index,
+                        waker: cx.waker().clone(),
+                        status: Request::STATUS_PENDING,
+                        operate: Operation::Read,
+                        buffer: alloc::vec![0u16; 256],
+                        error: false,
+                    };
+                    let request = Arc::new(SpinLock::new(request));
+
+                    // 排队
+                    let _guard = IrqGuard::cli();
+                    let mut queue = ATA_QUEUE.lock();
+                    if queue.0.is_some() {
+                        queue.1.push_back(request.clone());
+                    } else {
+                        send_io_command(&request);
+                        queue.0 = Some(request.clone());
                     }
-                    Poll::Ready(Ok(()))
-                }
-            }
-            None => {
-                assert!(self.buf.len() == 512);
-                let request = Request {
-                    disk: self.driver.disk,
-                    lba: self.block_index,
-                    waker: cx.waker().clone(),
-                    status: Request::STATUS_PENDING,
-                    operate: Operation::Read,
-                    buffer: alloc::vec![0u16; 256],
-                    error: false,
-                };
-                let request = Arc::new(SpinLock::new(request));
-                self.as_mut().requset = Some(request.clone());
 
-                let _guard = IrqGuard::cli();
-                let mut queue = ATA_QUEUE.lock();
-                if queue.0.is_some() {
-                    queue.1.push_back(request);
-                } else {
-                    send_io_command(&request);
-                    queue.0 = Some(request);
+                    let buf = core::mem::take(buf);
+                    *self.as_mut().get_mut() = Self::WaitDevice { buf, request };
                 }
+                Self::WaitDevice { buf, request } => {
+                    let _guard = IrqGuard::cli();
+                    let request = request.lock();
+                    if request.status != Request::STATUS_OK {
+                        return Poll::Pending;
+                    }
 
-                Poll::Pending
+                    let result = if request.error {
+                        Poll::Ready(Err(BlockDeviceError::IoError))
+                    } else {
+                        // 复制数据
+                        unsafe {
+                            copy_nonoverlapping(
+                                request.buffer.as_ptr() as *const u8,
+                                buf.as_mut_ptr(),
+                                512,
+                            );
+                        }
+                        Poll::Ready(Ok(()))
+                    };
+
+                    drop(request);
+                    *self.as_mut().get_mut() = Self::Done;
+                    return result;
+                }
+                Self::Done => panic!("future polled after complete"),
             }
         }
     }
 }
 
 fn send_io_command(request: &SyncRequest) {
+    // 设置中断
     let mut interrupt_enable: u8;
     unsafe {
         asm!(
@@ -310,8 +351,10 @@ fn io_wait() {
 }
 
 fn send_read_command(request: &Request) {
+    // 发送位置
     send_lba(request.disk, request.lba);
     io_wait();
+    // 发送读盘请求
     unsafe {
         asm!(
             "out dx, al",
@@ -323,8 +366,10 @@ fn send_read_command(request: &Request) {
 }
 
 fn send_write_command(request: &Request) {
+    // 发送位置
     send_lba(request.disk, request.lba);
     io_wait();
+    // 发送写盘请求
     unsafe {
         asm!(
             "out dx, al",
@@ -332,6 +377,43 @@ fn send_write_command(request: &Request) {
             in("al") 0x30u8,
             options(nostack, preserves_flags)
         );
+    }
+    // 等待DRQ
+    wait_drq();
+    // PIO方式写数据
+    for i in 0..256 {
+        unsafe {
+            asm!(
+                "out dx, ax",
+                in("ax") request.buffer[i],
+                in("dx") ATA_DATA,
+                options(nostack, preserves_flags)
+            )
+        }
+    }
+}
+
+fn wait_drq() {
+    loop {
+        let status: u8;
+        unsafe {
+            asm!(
+                "in al, dx",
+                out("al") status,
+                in("dx") ATA_STATUS,
+                options(nostack, preserves_flags),
+            )
+        }
+
+        // BSY=1，控制器忙
+        if (status & 0x80) != 0 {
+            continue;
+        }
+
+        // DRQ=1，请求主机写数据
+        if (status & 0x08) != 0 {
+            return;
+        }
     }
 }
 
@@ -352,20 +434,26 @@ pub fn ata_irq() {
     }
     // ERR=1，错误
     let err_reg = (status & 1) != 0;
+    // DRQ=1，请求主机写数据
     let drq_reg = (status & 0x08) != 0;
-    if !err_reg && !drq_reg {
-        return;
-    }
 
     let _guard = IrqGuard::cli();
     let mut queue = ATA_QUEUE.lock();
-    if let Some(request) = queue.0.take() {
-        let mut request = request.lock();
+
+    if let Some(raw_request) = queue.0.take() {
+        let mut request = raw_request.lock();
 
         request.error = err_reg;
-        if !err_reg {
-            match request.operate {
-                Operation::Read => {
+        match request.operate {
+            Operation::Read => {
+                // 读盘需要DRQ=1
+                if !err_reg && !drq_reg {
+                    drop(request);
+                    queue.0 = Some(raw_request);
+                    return;
+                }
+
+                if !err_reg {
                     // PIO方式读取数据
                     for i in 0..256 {
                         unsafe {
@@ -378,37 +466,8 @@ pub fn ata_irq() {
                         }
                     }
                 }
-                Operation::Write => {
-                    // PIO方式写数据
-                    for i in 0..256 {
-                        unsafe {
-                            asm!(
-                                "out dx, ax",
-                                in("ax") request.buffer[i],
-                                in("dx") ATA_DATA,
-                                options(nostack, preserves_flags)
-                            )
-                        }
-                    }
-
-                    loop {
-                        let status: u8;
-                        unsafe {
-                            asm!(
-                                "in al, dx",
-                                out("al") status,
-                                in("dx") ATA_STATUS,
-                                options(nostack, preserves_flags),
-                            )
-                        }
-
-                        // BSY=1，控制器忙
-                        if (status & 0x80) == 0 {
-                            break;
-                        }
-                    }
-                }
             }
+            Operation::Write => {}
         }
         request.status = Request::STATUS_OK;
         request.waker.wake_by_ref();
