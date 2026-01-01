@@ -22,6 +22,8 @@ static ATA_QUEUE: SpinLock<(Option<SyncRequest>, VecDeque<SyncRequest>)> =
 pub struct AtaLbaDriver {
     /// 硬盘号
     disk: u8,
+    /// 大小
+    size: u32,
 }
 
 const ATA_DATA: u16 = 0x1F0;
@@ -54,8 +56,15 @@ struct Request {
 }
 
 enum Operation {
+    Identify,
     Read,
     Write,
+}
+
+enum IdentifyDeviceFuture {
+    Init { disk: u8 },
+    WaitDevice { request: SyncRequest },
+    Done,
 }
 
 enum WriteBlockFuture<'a> {
@@ -85,7 +94,16 @@ enum ReadBlockFuture<'a> {
 
 impl AtaLbaDriver {
     pub async fn new(disk: u8) -> Result<Arc<Self>, BlockDeviceError> {
-        let driver = AtaLbaDriver { disk };
+        let identity_information = IdentifyDeviceFuture::Init { disk }.await?;
+        // 60 低16位
+        // 61 高16位
+        let block_count =
+            (identity_information[60] as u32) | ((identity_information[61] as u32) << 16);
+
+        let driver = AtaLbaDriver {
+            disk,
+            size: block_count,
+        };
 
         Ok(Arc::new(driver))
     }
@@ -102,8 +120,7 @@ impl BlockDevice for AtaLbaDriver {
     }
 
     fn block_count(&self) -> u64 {
-        // TODO: 暂时写死，应当通过IO指令进行查询
-        20480
+        self.size as u64
     }
 
     fn write_block<'fut>(
@@ -264,6 +281,61 @@ impl Future for ReadBlockFuture<'_> {
     }
 }
 
+impl Future for IdentifyDeviceFuture {
+    type Output = Result<Vec<u16>, BlockDeviceError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            match self.as_mut().get_mut() {
+                Self::Init { disk } => {
+                    // 构造请求
+                    let request = Request {
+                        disk: *disk,
+                        lba: 0,
+                        waker: cx.waker().clone(),
+                        status: Request::STATUS_PENDING,
+                        operate: Operation::Identify,
+                        buffer: alloc::vec![0u16; 256],
+                        error: false,
+                    };
+                    let request = Arc::new(SpinLock::new(request));
+
+                    // 排队
+                    let _guard = IrqGuard::cli();
+                    let mut queue = ATA_QUEUE.lock();
+                    if queue.0.is_some() {
+                        queue.1.push_back(request.clone());
+                    } else {
+                        send_io_command(&request);
+                        queue.0 = Some(request.clone());
+                    }
+
+                    *self.as_mut().get_mut() = Self::WaitDevice { request };
+                }
+                Self::WaitDevice { request } => {
+                    let _guard = IrqGuard::cli();
+                    let mut request = request.lock();
+                    if request.status != Request::STATUS_OK {
+                        return Poll::Pending;
+                    }
+
+                    let result = if request.error {
+                        Poll::Ready(Err(BlockDeviceError::IoError))
+                    } else {
+                        Poll::Ready(Ok(core::mem::take(&mut request.buffer)))
+                    };
+
+                    drop(request);
+                    *self.as_mut().get_mut() = Self::Done;
+
+                    return result;
+                }
+                Self::Done => panic!("future polled after complete"),
+            }
+        }
+    }
+}
+
 fn send_io_command(request: &SyncRequest) {
     // 设置中断
     let mut interrupt_enable: u8;
@@ -288,6 +360,7 @@ fn send_io_command(request: &SyncRequest) {
     let _guard = IrqGuard::cli();
     let request = request.lock();
     match request.operate {
+        Operation::Identify => send_identify_command(&request),
         Operation::Read => send_read_command(&request),
         Operation::Write => send_write_command(&request),
     }
@@ -347,6 +420,23 @@ fn io_wait() {
         asm!("in al, dx", in("dx") 0x3F6);
         asm!("in al, dx", in("dx") 0x3F6);
         asm!("in al, dx", in("dx") 0x3F6);
+    }
+}
+
+fn send_identify_command(request: &Request) {
+    // 发送位置
+    // 协议要求清除扇区寄存器和LBA寄存器，此处request.lba为0，刚好满足要求
+    assert_eq!(request.lba, 0);
+    send_lba(request.disk, request.lba);
+    io_wait();
+    // 发送identify请求
+    unsafe {
+        asm!(
+            "out dx, al",
+            in("dx") ATA_COMMAND,
+            in("al") 0xECu8,
+            options(nostack, preserves_flags)
+        );
     }
 }
 
@@ -445,6 +535,28 @@ pub fn ata_irq() {
 
         request.error = err_reg;
         match request.operate {
+            Operation::Identify => {
+                // 读盘需要DRQ=1
+                if !err_reg && !drq_reg {
+                    drop(request);
+                    queue.0 = Some(raw_request);
+                    return;
+                }
+
+                if !err_reg {
+                    // PIO方式读取数据
+                    for i in 0..256 {
+                        unsafe {
+                            asm!(
+                                "in ax, dx",
+                                out("ax") request.buffer[i],
+                                in("dx") ATA_DATA,
+                                options(nostack, preserves_flags)
+                            );
+                        }
+                    }
+                }
+            }
             Operation::Read => {
                 // 读盘需要DRQ=1
                 if !err_reg && !drq_reg {
