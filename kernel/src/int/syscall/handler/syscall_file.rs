@@ -1,8 +1,6 @@
 use crate::{
     int::syscall::SYSCALL_SUCCESS,
-    io, memory, multitask,
-    sync::{int::IrqGuard, percpu},
-    syscall_handler,
+    io, memory, multitask, syscall_handler,
     user::handle::{FileHandleObject, HandleObject},
 };
 
@@ -13,12 +11,7 @@ syscall_handler! {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
+        let process = multitask::process::current_process().unwrap();
 
         let mut path = alloc::vec![0u8; path_len as usize];
         unsafe {
@@ -56,12 +49,7 @@ syscall_handler! {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
+        let process = multitask::process::current_process().unwrap();
 
         let mut path = alloc::vec![0u8; path_len as usize];
         unsafe {
@@ -111,12 +99,7 @@ syscall_handler! {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
+        let process = multitask::process::current_process().unwrap();
 
         let Some(handle) = multitask::process::get_process_handle(&process, handle as usize) else {
             return cos_sys::error::ErrorKind::BadArgument as u64;
@@ -163,12 +146,7 @@ syscall_handler! {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
+        let process = multitask::process::current_process().unwrap();
 
         let Some(handle) = multitask::process::get_process_handle(&process, handle as usize) else {
             return cos_sys::error::ErrorKind::BadArgument as u64;
@@ -212,12 +190,7 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_file_close(handle: u64) {
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
+        let process = multitask::process::current_process().unwrap();
 
         multitask::process::remove_process_handle(&process, handle as usize);
     }
@@ -229,12 +202,7 @@ syscall_handler! {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
+        let process = multitask::process::current_process().unwrap();
 
         let Some(handle) = multitask::process::get_process_handle(&process, handle as usize) else {
             return cos_sys::error::ErrorKind::BadArgument as u64;
@@ -271,12 +239,7 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_file_set_pos(handle: u64, pos: u64) -> u64 {
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
+        let process = multitask::process::current_process().unwrap();
 
         let Some(handle) = multitask::process::get_process_handle(&process, handle as usize) else {
             return cos_sys::error::ErrorKind::BadArgument as u64;

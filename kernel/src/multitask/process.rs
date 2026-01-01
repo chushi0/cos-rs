@@ -75,6 +75,15 @@ fn create_process() -> Option<Arc<SpinLock<Process>>> {
     Some(process)
 }
 
+pub fn current_process() -> Option<Arc<SpinLock<Process>>> {
+    let thread = multitask::thread::current_thread()?;
+    let process_id = {
+        let _guard = IrqGuard::cli();
+        thread.lock().process_id
+    }?;
+    get_process(process_id.get())
+}
+
 /// 根据id获取进程
 pub fn get_process(id: u64) -> Option<Arc<SpinLock<Process>>> {
     let _guard = IrqGuard::cli();

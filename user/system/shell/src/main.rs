@@ -7,7 +7,7 @@ extern crate rlibc;
 
 use cos_sys::{
     debug::{get_char, put_char},
-    file::{close, open, read, write},
+    file::{close, open, read},
     multitask::exit,
 };
 
@@ -75,11 +75,6 @@ fn process_command(cmd: &[u8]) -> bool {
         return true;
     }
 
-    if cmd == b"test write" {
-        test_write();
-        return false;
-    }
-
     if let Some(msg) = cmd.strip_prefix(b"echo ") {
         print(msg);
         print(b"\n");
@@ -106,16 +101,6 @@ fn print_welcome_file() {
         }
         print(&buffer[..read_count]);
     }
-    close(file).unwrap();
-}
-
-fn test_write() {
-    let file = open(b"/system/welcome.txt").unwrap();
-    write(
-        file,
-        b"Welcome to COS shell!\nThis file is overide by syscall\ntype `help` to see commands\n",
-    )
-    .unwrap();
     close(file).unwrap();
 }
 

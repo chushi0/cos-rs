@@ -1,11 +1,7 @@
 use alloc::sync::Arc;
 
 use crate::{
-    int::syscall::SYSCALL_SUCCESS,
-    memory, multitask,
-    sync::{int::IrqGuard, percpu},
-    syscall_handler,
-    user::handle::HandleObject,
+    int::syscall::SYSCALL_SUCCESS, memory, multitask, syscall_handler, user::handle::HandleObject,
 };
 
 syscall_handler! {
@@ -13,9 +9,7 @@ syscall_handler! {
         // 在thread_yield执行前，必须释放全部临时对象
         // 因为thread_yield不会再返回，若不释放会导致内存泄漏
         {
-            let current_thread = multitask::thread::current_thread().unwrap();
-            let process_id = current_thread.lock().process_id.unwrap();
-            let process = multitask::process::get_process(process_id.get()).unwrap();
+            let process = multitask::process::current_process().unwrap();
             multitask::process::set_exit_code(&process, code);
             multitask::process::stop_all_thread(&process);
         }
@@ -42,47 +36,6 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_current_thread(thread_id_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(thread_id_ptr as usize) {
-            return cos_sys::error::ErrorKind::SegmentationFault as u64;
-        }
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
-
-        unsafe {
-            if multitask::process::write_user_process_memory_struct(&process, thread_id_ptr, &thread_id).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
-            }
-        }
-        SYSCALL_SUCCESS
-    }
-}
-
-syscall_handler! {
-    fn syscall_current_process(process_id_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(process_id_ptr as usize) {
-            return cos_sys::error::ErrorKind::SegmentationFault as u64;
-        }
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
-        unsafe {
-            if multitask::process::write_user_process_memory_struct(&process, process_id_ptr, &process_id).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
-            }
-        }
-        SYSCALL_SUCCESS
-    }
-}
-
-syscall_handler! {
     fn syscall_create_process(exe_ptr: u64, exe_len: u64, process_handle_ptr: u64) -> u64 {
         if !memory::physics::is_user_space_virtual_memory(exe_ptr as usize) ||
             !memory::physics::is_user_space_virtual_memory((exe_ptr + exe_len) as usize) ||
@@ -90,12 +43,7 @@ syscall_handler! {
                 return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
+        let process = multitask::process::current_process().unwrap();
 
         let mut exe = alloc::vec![0u8; exe_len as usize];
         unsafe {
@@ -146,12 +94,7 @@ syscall_handler! {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
-        let thread_id = percpu::get_current_thread_id();
-        let process_id = {
-            let _guard = IrqGuard::cli();
-            multitask::thread::get_thread(thread_id).unwrap().lock().process_id.unwrap().get()
-        };
-        let process = multitask::process::get_process(process_id).unwrap();
+        let process = multitask::process::current_process().unwrap();
 
         let Some(handle) = multitask::process::get_process_handle(&process, process_handle as usize) else {
             return cos_sys::error::ErrorKind::BadArgument as u64;

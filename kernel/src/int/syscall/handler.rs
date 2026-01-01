@@ -20,22 +20,19 @@ pub const SYSCALL_HANDLER: &[SyscallEntry] = &[
         cos_sys::idx::IDX_EXIT_THREAD,
         syscall_multitask::syscall_exit_thread,
     ),
-    (
-        cos_sys::idx::IDX_THREAD_CURRENT,
-        syscall_multitask::syscall_current_thread,
-    ),
+    (cos_sys::idx::IDX_THREAD_CURRENT, syscall_test),
     (cos_sys::idx::IDX_THREAD_SUSPEND, syscall_test),
     (cos_sys::idx::IDX_THREAD_RESUME, syscall_test),
     (cos_sys::idx::IDX_THREAD_KILL, syscall_test),
     (cos_sys::idx::IDX_THREAD_CREATE, syscall_test),
-    (cos_sys::idx::IDX_MEMORY_ALLOC, syscall_test),
+    (
+        cos_sys::idx::IDX_MEMORY_ALLOC,
+        syscall_memory::syscall_alloc_page,
+    ),
     (cos_sys::idx::IDX_MEMORY_FREE, syscall_test),
     (cos_sys::idx::IDX_MEMORY_TEST, syscall_test),
     (cos_sys::idx::IDX_MEMORY_MODIFY, syscall_test),
-    (
-        cos_sys::idx::IDX_PROCESS_CURRENT,
-        syscall_multitask::syscall_current_process,
-    ),
+    (cos_sys::idx::IDX_PROCESS_CURRENT, syscall_test),
     (
         cos_sys::idx::IDX_PROCESS_CREATE,
         syscall_multitask::syscall_create_process,

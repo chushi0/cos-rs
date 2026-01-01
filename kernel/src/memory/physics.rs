@@ -727,10 +727,7 @@ unsafe fn remove_kernel_memory_page(virtual_memory: usize) {
     let pd_addr = pdpt_entry.address() as usize;
     let mut pd_entry = PageEntry(0);
     unsafe {
-        read_memory(
-            pd_addr + pd_index * size_of::<PageEntry>(),
-            &mut pd_entry,
-        );
+        read_memory(pd_addr + pd_index * size_of::<PageEntry>(), &mut pd_entry);
     }
 
     // 1级页表
@@ -739,10 +736,7 @@ unsafe fn remove_kernel_memory_page(virtual_memory: usize) {
     // 移除页表，同时检查当前页表是否全部移除，以移除页表自身对应内存
     let zero_entry = PageEntry(0);
     unsafe {
-        write_memory(
-            pt_addr + pt_index * size_of::<PageEntry>(),
-            &zero_entry,
-        );
+        write_memory(pt_addr + pt_index * size_of::<PageEntry>(), &zero_entry);
     }
     let mut pt_removed_all = true;
     for i in 0..512 {
@@ -763,10 +757,7 @@ unsafe fn remove_kernel_memory_page(virtual_memory: usize) {
         }
 
         unsafe {
-            write_memory(
-                pd_addr + pd_index * size_of::<PageEntry>(),
-                &zero_entry,
-            );
+            write_memory(pd_addr + pd_index * size_of::<PageEntry>(), &zero_entry);
         }
         let mut pd_removed_all = true;
         for i in 0..512 {
