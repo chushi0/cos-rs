@@ -364,7 +364,6 @@ fn send_io_command(request: &SyncRequest) {
         Operation::Read => send_read_command(&request),
         Operation::Write => send_write_command(&request),
     }
-    io_wait();
 }
 
 fn send_lba(disk: u8, lba: u64) {
@@ -414,21 +413,11 @@ fn send_lba(disk: u8, lba: u64) {
     }
 }
 
-fn io_wait() {
-    unsafe {
-        asm!("in al, dx", in("dx") 0x3F6);
-        asm!("in al, dx", in("dx") 0x3F6);
-        asm!("in al, dx", in("dx") 0x3F6);
-        asm!("in al, dx", in("dx") 0x3F6);
-    }
-}
-
 fn send_identify_command(request: &Request) {
     // 发送位置
     // 协议要求清除扇区寄存器和LBA寄存器，此处request.lba为0，刚好满足要求
     assert_eq!(request.lba, 0);
     send_lba(request.disk, request.lba);
-    io_wait();
     // 发送identify请求
     unsafe {
         asm!(
@@ -443,7 +432,6 @@ fn send_identify_command(request: &Request) {
 fn send_read_command(request: &Request) {
     // 发送位置
     send_lba(request.disk, request.lba);
-    io_wait();
     // 发送读盘请求
     unsafe {
         asm!(
@@ -458,7 +446,6 @@ fn send_read_command(request: &Request) {
 fn send_write_command(request: &Request) {
     // 发送位置
     send_lba(request.disk, request.lba);
-    io_wait();
     // 发送写盘请求
     unsafe {
         asm!(
@@ -536,13 +523,6 @@ pub fn ata_irq() {
         request.error = err_reg;
         match request.operate {
             Operation::Identify => {
-                // 读盘需要DRQ=1
-                if !err_reg && !drq_reg {
-                    drop(request);
-                    queue.0 = Some(raw_request);
-                    return;
-                }
-
                 if !err_reg {
                     // PIO方式读取数据
                     for i in 0..256 {
