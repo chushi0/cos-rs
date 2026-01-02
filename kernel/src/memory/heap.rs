@@ -8,7 +8,8 @@ use crate::{
     sync::{int::IrqGuard, spin::SpinLock},
 };
 
-static KERNEL_HEAP: SpinLock<KernelHeap> = SpinLock::new(KernelHeap::uninit());
+static KERNEL_HEAP: SpinLock<RustHeap<PhysicalMemoryPageProvider>> =
+    SpinLock::new(RustHeap::new(PhysicalMemoryPageProvider));
 
 const HEAP_SIZE_CLASSES: [usize; 9] = [8, 16, 32, 64, 128, 256, 512, 1024, 2048];
 const HEAP_FREE_COUNT: [u64; 9] = [
@@ -27,8 +28,18 @@ const fn free_count(size: usize) -> u64 {
     ((0x1000 - size_of::<HeapNodeHead>()) / size) as u64
 }
 
-struct KernelHeap {
+trait MemoryPageProvider {
+    fn allocate_page(&mut self) -> Option<NonNull<u8>> {
+        self.allocate_pages(0x1000)
+    }
+
+    fn allocate_pages(&mut self, size: usize) -> Option<NonNull<u8>>;
+    fn deallocate_pages(&mut self, address: NonNull<u8>, size: usize);
+}
+
+struct RustHeap<P> {
     bucket: [*mut HeapNodeHead; 9],
+    provider: P,
 }
 
 // 使用双向链表管理空闲内存
@@ -47,12 +58,13 @@ struct NodeFreeBody {
     next: *mut NodeFreeBody,
 }
 
-unsafe impl Send for KernelHeap {}
+unsafe impl<P: Send> Send for RustHeap<P> {}
 
-impl KernelHeap {
-    const fn uninit() -> Self {
+impl<P: MemoryPageProvider> RustHeap<P> {
+    const fn new(provider: P) -> Self {
         Self {
             bucket: [ptr::null_mut(); 9],
+            provider,
         }
     }
 
@@ -73,31 +85,17 @@ impl KernelHeap {
             if (size & 0xFFF) != 0 {
                 size = (size & !0xFFF) + 0x1000;
             }
-            let allocate = unsafe {
-                memory::physics::alloc_mapped_frame(
-                    memory::physics::kernel_pml4(),
-                    size,
-                    AllocateFrameOptions::KERNEL_DATA,
-                )
-            };
-            return match allocate {
-                Ok(ptr) => ptr.as_ptr(),
-                Err(_) => ptr::null_mut(),
+            return match self.provider.allocate_pages(size) {
+                Some(ptr) => ptr.as_ptr(),
+                None => ptr::null_mut(),
             };
         }
 
         // 桶内的内存不足，申请新内存页
         if self.bucket[index].is_null() {
-            let allocate = unsafe {
-                memory::physics::alloc_mapped_frame(
-                    memory::physics::kernel_pml4(),
-                    0x1000,
-                    AllocateFrameOptions::KERNEL_DATA,
-                )
-            };
-            let new_page = match allocate {
-                Ok(ptr) => ptr.as_ptr(),
-                Err(_) => return ptr::null_mut(),
+            let new_page = match self.provider.allocate_page() {
+                Some(ptr) => ptr.as_ptr(),
+                None => return ptr::null_mut(),
             } as *mut HeapNodeHead;
 
             // 填充新页元数据
@@ -137,25 +135,18 @@ impl KernelHeap {
     }
 
     unsafe fn deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) {
-        let ptr = ptr.as_ptr();
-
         // 如果对齐到4K，说明之前申请的完整的一页内存，直接交还给page frame
-        if (ptr as usize & 0xFFF) == 0 {
+        if (ptr.as_ptr() as usize & 0xFFF) == 0 {
             let mut size = layout.align().max(layout.size());
             if (size & 0xFFF) != 0 {
                 size = (size & !0xFFF) + 0x1000;
             }
-            unsafe {
-                memory::physics::free_mapped_frame(
-                    memory::physics::kernel_pml4(),
-                    ptr as usize,
-                    size,
-                );
-            }
+            self.provider.deallocate_pages(ptr, size);
             return;
         }
 
         // 其余情况，对齐到4K，获取bucket元数据
+        let ptr = ptr.as_ptr();
         let head = (ptr as usize & !0xFFF) as *mut HeapNodeHead;
         let index = Self::get_bucket_index_by_layout(layout);
 
@@ -187,12 +178,34 @@ impl KernelHeap {
                         (*(*head).next).prev = (*head).prev;
                     }
                 }
-                memory::physics::free_mapped_frame(
-                    memory::physics::kernel_pml4(),
-                    head as usize,
-                    0x1000,
-                );
+                self.provider
+                    .deallocate_pages(NonNull::new_unchecked(head.cast::<u8>()), 0x1000);
             }
+        }
+    }
+}
+
+struct PhysicalMemoryPageProvider;
+
+impl MemoryPageProvider for PhysicalMemoryPageProvider {
+    fn allocate_pages(&mut self, size: usize) -> Option<NonNull<u8>> {
+        unsafe {
+            memory::physics::alloc_mapped_frame(
+                memory::physics::kernel_pml4(),
+                size,
+                AllocateFrameOptions::KERNEL_DATA,
+            )
+            .ok()
+        }
+    }
+
+    fn deallocate_pages(&mut self, address: NonNull<u8>, size: usize) {
+        unsafe {
+            memory::physics::free_mapped_frame(
+                memory::physics::kernel_pml4(),
+                address.as_ptr() as usize,
+                size,
+            );
         }
     }
 }
