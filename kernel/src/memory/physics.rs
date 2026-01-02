@@ -300,112 +300,110 @@ impl FrameAllocator {
     }
 }
 
-pub enum AllocFrameHint {
-    /// 内核堆内存，优先使用高地址空间 0xFFFF_FF80_0000_0000 ~ 0xFFFF_FFFF_BFFF_FFFF
-    /// 即使用KERNEL_PDPT[0] ~ KERNEL_PDPT[510]部分
-    KernelHeap,
-    /// 用户代码段
-    UserCode(NonZeroU64),
-    /// 用户栈
-    UserStack(NonZeroU64),
-    /// 用户堆或运行时动态申请
-    UserHeap(NonZeroU64),
-    // 用户代码段（固定虚拟地址）
-    StaticUserCode(NonZeroU64, NonZeroU64),
-    // 用户数据段（固定虚拟地址）
-    StaticUserData(NonZeroU64, NonZeroU64),
-    // 用户常量段（固定虚拟地址）
-    StaticUserConst(NonZeroU64, NonZeroU64),
+#[derive(Debug, Clone, Copy)]
+pub struct AllocateFrameOptions {
+    /// 若为true，则创建用户态
+    user: bool,
+    /// 若为true，则该页可写
+    writable: bool,
+    /// 若为true，则该页可执行
+    executable: bool,
+    /// 若为true，则使用指定虚拟位置选址
+    static_vaddr: Option<NonZeroU64>,
+}
+
+impl AllocateFrameOptions {
+    pub const KERNEL_DATA: Self = Self {
+        user: false,
+        writable: true,
+        executable: false,
+        static_vaddr: None,
+    };
+
+    pub const USER_DATA: Self = Self {
+        user: true,
+        writable: true,
+        executable: false,
+        static_vaddr: None,
+    };
+
+    pub const USER_CODE: Self = Self {
+        user: true,
+        writable: false,
+        executable: true,
+        static_vaddr: None,
+    };
+
+    pub fn with_static_vaddr(self, static_vaddr: NonZero<u64>) -> Self {
+        Self {
+            static_vaddr: Some(static_vaddr),
+            ..self
+        }
+    }
+}
+
+pub enum AllocMappedFrameError {
+    // 物理内存不足
+    OutOfPhysicalMemory,
+    // 虚拟空间不足
+    OutOfVirtualSpace,
+    // 保留虚拟地址区域
+    ReservedVaddr,
 }
 
 /// 申请页帧，并映射到虚拟地址空间
 ///
 /// 该函数将申请4K内存页，并将其写入页表，从而使得内存可以使用。
-/// size为预期的内存页大小，需对齐至4K
-/// hint为对虚拟地址空间的提示，采用不同策略分配虚拟地址
+/// pml4: 指定页表的物理内存
+/// size: 为预期的内存页大小，需对齐至4K
+/// options: 页分配特殊选项
 ///
-/// 当函数成功时，返回内存页虚拟地址空间的起始地址。此时内存可立即使用。
-/// 当函数失败时，返回None。
-/// 如果申请了多个内存页，系统内存页未完全耗尽但不足以分配，则在返回None时，不会消耗内存页。
-pub fn alloc_mapped_frame(size: usize, hint: AllocFrameHint) -> Option<NonNull<u8>> {
+/// 当函数成功时，返回内存页虚拟地址空间的起始地址。如果pml4为当前加载的页表，那么此时内存可立即使用。
+/// 当函数失败时，返回其具体失败原因。
+/// 如果申请了多个内存页，系统内存页未完全耗尽但不足以分配，则在返回None时，不会消耗内存页
+///
+/// Safety:
+/// 1. 页表操作为全局资源操作，必须确保不可被打断（关中断+加锁）。并发安全由调用方保证。
+/// 2. pml4必须为某个页表的物理地址
+pub unsafe fn alloc_mapped_frame(
+    pml4: u64,
+    size: usize,
+    options: AllocateFrameOptions,
+) -> Result<NonNull<u8>, AllocMappedFrameError> {
+    assert!((pml4 & 0xFFF) == 0);
+    assert!((size & 0xFFF) == 0);
+
     let frame_count = size / 0x1000;
 
-    // 寻找可用的连续虚拟内存
-    let virtual_memory_start = match hint {
-        AllocFrameHint::KernelHeap => find_kernel_free_virtual_memory(frame_count)?,
-        AllocFrameHint::UserCode(pml4) => find_user_free_virtual_memory(frame_count, pml4.get())?,
-        AllocFrameHint::UserStack(pml4) => find_user_free_virtual_memory(frame_count, pml4.get())?,
-        AllocFrameHint::UserHeap(pml4) => find_user_free_virtual_memory(frame_count, pml4.get())?,
-        AllocFrameHint::StaticUserCode(pml4, vaddr) => {
-            find_user_free_virtual_memory_static(frame_count, pml4.get(), vaddr.get())?
-        }
-        AllocFrameHint::StaticUserData(pml4, vaddr) => {
-            find_user_free_virtual_memory_static(frame_count, pml4.get(), vaddr.get())?
-        }
-        AllocFrameHint::StaticUserConst(pml4, vaddr) => {
-            find_user_free_virtual_memory_static(frame_count, pml4.get(), vaddr.get())?
-        }
-    };
+    // 起始虚拟内存地址
+    let virtual_memory_start = if let Some(vaddr_start) = options.static_vaddr {
+        find_user_free_virtual_memory_static(frame_count, pml4, vaddr_start.get())
+    } else if options.user {
+        find_user_free_virtual_memory(frame_count, pml4)
+    } else {
+        find_kernel_free_virtual_memory(frame_count)
+    }
+    .ok_or(AllocMappedFrameError::OutOfVirtualSpace)?;
 
     for i in 0..frame_count {
         // 申请物理内存页
         let Some(physics_memory) = FRAME_ALLOCATOR.lock().alloc_frame() else {
             // 内存不足，将已分配的内存页释放
             unsafe {
-                free_mapped_frame(virtual_memory_start.get(), i * 0x1000);
+                free_mapped_frame(pml4, virtual_memory_start.get(), i * 0x1000);
             }
-            return None;
+            return Err(AllocMappedFrameError::OutOfPhysicalMemory);
         };
 
         // 写入到页表中
-        let result = match hint {
-            AllocFrameHint::KernelHeap => write_kernel_memory_page(
-                virtual_memory_start.get() + i * 0x1000,
-                physics_memory.get(),
-            ),
-            AllocFrameHint::UserCode(pml4) => write_user_memory_page(
-                virtual_memory_start.get() + i * 0x1000,
-                physics_memory.get(),
-                pml4.get(),
-                false,
-                true,
-            ),
-            AllocFrameHint::UserStack(pml4) => write_user_memory_page(
-                virtual_memory_start.get() + i * 0x1000,
-                physics_memory.get(),
-                pml4.get(),
-                true,
-                false,
-            ),
-            AllocFrameHint::UserHeap(pml4) => write_user_memory_page(
-                virtual_memory_start.get() + i * 0x1000,
-                physics_memory.get(),
-                pml4.get(),
-                true,
-                false,
-            ),
-            AllocFrameHint::StaticUserCode(pml4, ..) => write_user_memory_page(
-                virtual_memory_start.get() + i * 0x1000,
-                physics_memory.get(),
-                pml4.get(),
-                false,
-                true,
-            ),
-            AllocFrameHint::StaticUserData(pml4, ..) => write_user_memory_page(
-                virtual_memory_start.get() + i * 0x1000,
-                physics_memory.get(),
-                pml4.get(),
-                true,
-                false,
-            ),
-            AllocFrameHint::StaticUserConst(pml4, ..) => write_user_memory_page(
-                virtual_memory_start.get() + i * 0x1000,
-                physics_memory.get(),
-                pml4.get(),
-                false,
-                false,
-            ),
-        };
+        let result = write_memory_page(
+            virtual_memory_start.get() + i * 0x1000,
+            physics_memory.get(),
+            pml4 as usize,
+            options.writable,
+            options.executable,
+            options.user,
+        );
 
         // 页表写入也可能失败，因为写页表时可能触发内存页分配
         if result.is_err() {
@@ -415,13 +413,13 @@ pub fn alloc_mapped_frame(size: usize, hint: AllocFrameHint) -> Option<NonNull<u
             }
             // 将已分配的内存页释放
             unsafe {
-                free_mapped_frame(virtual_memory_start.get(), i * 0x1000);
+                free_mapped_frame(pml4, virtual_memory_start.get(), i * 0x1000);
             }
-            return None;
+            return Err(AllocMappedFrameError::OutOfPhysicalMemory);
         }
     }
 
-    NonNull::new(virtual_memory_start.get() as *mut u8)
+    Ok(NonNull::new(virtual_memory_start.get() as *mut u8).unwrap())
 }
 
 /// 返还申请的页帧，从虚拟地址空间中移除，并等待再次分配
@@ -432,12 +430,12 @@ pub fn alloc_mapped_frame(size: usize, hint: AllocFrameHint) -> Option<NonNull<u
 /// Safety:
 /// address必须为[`alloc_mapped_frame`]返回的地址，且size必须与分配时一致。
 /// 任何双重释放或释放未分配的内存均会发生未定义行为
-pub unsafe fn free_mapped_frame(address: usize, size: usize) {
+pub unsafe fn free_mapped_frame(pml4: u64, address: usize, size: usize) {
     let _guard = IrqGuard::cli();
     let frame_count = size / 0x1000;
     for i in 0..frame_count {
         unsafe {
-            remove_kernel_memory_page(address + i * 0x1000);
+            remove_memory_page(pml4 as usize, address + i * 0x1000);
         }
     }
 }
@@ -461,6 +459,7 @@ fn find_kernel_free_virtual_memory(block: usize) -> Option<NonZeroUsize> {
 
     find_free_virtual_memory(KERNEL_SEARCH_START, KERNEL_SEARCH_END, pml4, block)
 }
+
 // 用户起始地址
 const USER_SEARCH_START: usize = 0x0000_0080_0000_0000;
 // 用户结束地址
@@ -538,35 +537,10 @@ struct WritePageError;
 /// 如果成功，返回Ok，此时虚拟内存已可用且已映射到对应物理内存
 ///
 /// 注意：该函数仅负责刷新当前CPU的页表缓存，在其他CPU刷新之前，虚拟内存地址不可用
-fn write_kernel_memory_page(
-    virtual_memory: usize,
-    physics_memory: usize,
-) -> Result<(), WritePageError> {
-    let pml4 = unsafe { PML4.unwrap() };
-    write_memory_page(virtual_memory, physics_memory, pml4, true, false, false)
-}
-
-fn write_user_memory_page(
-    virtual_memory: usize,
-    physics_memory: usize,
-    pml4: u64,
-    writable: bool,
-    executable: bool,
-) -> Result<(), WritePageError> {
-    write_memory_page(
-        virtual_memory,
-        physics_memory,
-        pml4 as usize as *const PageTable,
-        writable,
-        executable,
-        true,
-    )
-}
-
 fn write_memory_page(
     virtual_memory: usize,
     physics_memory: usize,
-    pml4: *const PageTable,
+    pml4: usize,
     writable: bool,
     executable: bool,
     userusable: bool,
@@ -596,24 +570,12 @@ fn write_memory_page(
     let pt_index = (virtual_memory >> 12) & 0x1FF;
 
     // 4级页表
-    let mut pml4_entry = PageEntry(0);
-    unsafe {
-        read_memory(
-            pml4 as usize + pml4_index * size_of::<PageEntry>(),
-            &mut pml4_entry,
-        );
-    }
+    let mut pml4_entry = unsafe { PageTable::get_entry(pml4, pml4_index) };
 
     // 3级页表
     // 如果获取下一级页表失败，可以立即返回，因为此时没有申请其他内存
     let (pdpt_address, pdpt_alloc_physics) = get_or_alloc(&pml4_entry).ok_or(WritePageError)?;
-    let mut pdpt_entry = PageEntry(0);
-    unsafe {
-        read_memory(
-            pdpt_address + pdpt_index * size_of::<PageEntry>(),
-            &mut pdpt_entry,
-        );
-    }
+    let mut pdpt_entry = unsafe { PageTable::get_entry(pdpt_address, pdpt_index) };
 
     // 2级页表
     // 如果获取下一级页表失败，必须先将pdpt_alloc_physics的物理内存释放
@@ -625,14 +587,7 @@ fn write_memory_page(
         }
         return Err(WritePageError);
     };
-    let mut pd_entry = unsafe {
-        let mut pd_entry = MaybeUninit::<PageEntry>::uninit();
-        read_memory(
-            pd_address + pd_index * size_of::<PageEntry>(),
-            &mut pd_entry,
-        );
-        pd_entry.assume_init()
-    };
+    let mut pd_entry = unsafe { PageTable::get_entry(pd_address, pd_index) };
 
     // 1级页表
     // 如果获取下一级页表失败，必须先将pdpt_alloc_physics和pd_alloc_physics的物理内存释放
@@ -662,33 +617,27 @@ fn write_memory_page(
 
     // 更新各级页表
     unsafe {
-        write_memory(pt_address + pt_index * size_of::<PageEntry>(), &pt_entry);
+        PageTable::write_entry(pt_address, pt_index, pt_entry);
         if let Some(pt_alloc_physics) = pt_alloc_physics {
             pd_entry.0 = pt_alloc_physics.get() as u64 | PageEntry::P_PRESENT | PageEntry::P_RW;
             if userusable {
                 pd_entry.0 |= PageEntry::P_US;
             }
-            write_memory(pd_address + pd_index * size_of::<PageEntry>(), &pd_entry);
+            PageTable::write_entry(pd_address, pd_index, pd_entry);
         }
         if let Some(pd_alloc_physics) = pd_alloc_physics {
             pdpt_entry.0 = pd_alloc_physics.get() as u64 | PageEntry::P_PRESENT | PageEntry::P_RW;
             if userusable {
                 pdpt_entry.0 |= PageEntry::P_US;
             }
-            write_memory(
-                pdpt_address + pdpt_index * size_of::<PageEntry>(),
-                &pdpt_entry,
-            );
+            PageTable::write_entry(pdpt_address, pdpt_index, pdpt_entry);
         }
         if let Some(pdpt_alloc_physics) = pdpt_alloc_physics {
             pml4_entry.0 = pdpt_alloc_physics.get() as u64 | PageEntry::P_PRESENT | PageEntry::P_RW;
             if userusable {
                 pml4_entry.0 |= PageEntry::P_US;
             }
-            write_memory(
-                pml4 as usize + pml4_index * size_of::<PageEntry>(),
-                &pml4_entry,
-            );
+            PageTable::write_entry(pml4, pml4_index, pml4_entry);
         }
     }
 
@@ -706,6 +655,7 @@ fn write_memory_page(
 
 /// 将指定虚拟内存移除映射，并归还其物理内存
 ///
+/// pml4: 页表物理地址
 /// virtual_memory: 虚拟内存地址，必须对齐到4K
 ///
 /// 移除映射后，该虚拟内存会在当前CPU立刻刷新缓存。函数返回后，此虚拟内存不再可用。
@@ -713,71 +663,75 @@ fn write_memory_page(
 /// Safety:
 /// 调用方需保证此虚拟内存对应的物理内存是独占的，即不存在其余虚拟内存映射到同一物理内存。
 /// 调用方还需保证此内存在内核页表中存在
-unsafe fn remove_kernel_memory_page(virtual_memory: usize) {
+unsafe fn remove_memory_page(pml4: usize, virtual_memory: usize) {
+    assert!((pml4 & 0xfff) == 0);
+    assert!((virtual_memory & 0xfff) == 0);
+
+    let _guard = IrqGuard::cli();
+
     // 计算当前虚拟内存地址在各级页表的位置
+    let pml4_index = (virtual_memory >> 39) & 0x1FF;
     let pdpt_index = (virtual_memory >> 30) & 0x1FF;
     let pd_index = (virtual_memory >> 21) & 0x1FF;
     let pt_index = (virtual_memory >> 12) & 0x1FF;
 
-    // 3级页表
-    let kernel_pdpt = unsafe { KERNEL_PDPT.unwrap() as *mut PageTable };
-    let pdpt_entry = unsafe { &mut (&mut *kernel_pdpt)[pdpt_index] };
+    // 读各页表
+    let pml4_entry = unsafe { PageTable::get_entry(pml4, pml4_index) };
+    assert!(pml4_entry.present());
+    let pdpt_address = pml4_entry.address() as usize;
 
-    // 2级页表
-    let pd_addr = pdpt_entry.address() as usize;
-    let mut pd_entry = PageEntry(0);
+    let pdpt_entry = unsafe { PageTable::get_entry(pdpt_address, pdpt_index) };
+    assert!(pdpt_entry.present());
+    let pd_address = pdpt_entry.address() as usize;
+
+    let pd_entry = unsafe { PageTable::get_entry(pd_address, pd_index) };
+    assert!(pd_entry.present());
+    let pt_address = pd_entry.address() as usize;
+
+    let pt_entry = unsafe { PageTable::get_entry(pt_address, pt_index) };
+    assert!(pt_entry.present());
+
+    // 清除页表项，回收物理空间
     unsafe {
-        read_memory(pd_addr + pd_index * size_of::<PageEntry>(), &mut pd_entry);
+        FRAME_ALLOCATOR
+            .lock()
+            .delloc_frame(NonZero::new(pt_entry.address() as usize).unwrap());
+        PageTable::write_entry(pt_address, pt_index, PageEntry(0));
     }
 
-    // 1级页表
-    let pt_addr = pd_entry.address() as usize;
-
-    // 移除页表，同时检查当前页表是否全部移除，以移除页表自身对应内存
-    let zero_entry = PageEntry(0);
-    unsafe {
-        write_memory(pt_addr + pt_index * size_of::<PageEntry>(), &zero_entry);
-    }
-    let mut pt_removed_all = true;
-    for i in 0..512 {
-        let mut entry = PageEntry(0);
+    // 依次判断是否需要回收页表
+    'free_page_table: {
+        let pt_empty = unsafe { PageTable::is_all_emptry(pt_address) };
+        if !pt_empty {
+            break 'free_page_table;
+        }
         unsafe {
-            read_memory(pt_addr + i * size_of::<PageEntry>(), &mut entry);
-        }
-        if entry.present() {
-            pt_removed_all = false;
-            break;
-        }
-    }
-    if pt_removed_all {
-        if let Some(addr) = NonZero::new(pt_addr) {
-            unsafe {
-                FRAME_ALLOCATOR.lock().delloc_frame(addr);
-            }
+            FRAME_ALLOCATOR
+                .lock()
+                .delloc_frame(NonZero::new(pt_address).unwrap());
+            PageTable::write_entry(pd_address, pd_index, PageEntry(0));
         }
 
+        let pd_empty = unsafe { PageTable::is_all_emptry(pd_address) };
+        if !pd_empty {
+            break 'free_page_table;
+        }
         unsafe {
-            write_memory(pd_addr + pd_index * size_of::<PageEntry>(), &zero_entry);
+            FRAME_ALLOCATOR
+                .lock()
+                .delloc_frame(NonZero::new(pd_address).unwrap());
+            PageTable::write_entry(pdpt_address, pdpt_index, PageEntry(0));
         }
-        let mut pd_removed_all = true;
-        for i in 0..512 {
-            let mut entry = PageEntry(0);
-            unsafe {
-                read_memory(pd_addr + i * size_of::<PageEntry>(), &mut entry);
-            }
-            if entry.present() {
-                pd_removed_all = false;
-                break;
-            }
-        }
-        if pd_removed_all {
-            if let Some(addr) = NonZero::new(pd_addr) {
-                unsafe {
-                    FRAME_ALLOCATOR.lock().delloc_frame(addr);
-                }
-            }
 
-            pdpt_entry.0 = 0;
+        let pdpt_empty = unsafe { PageTable::is_all_emptry(pdpt_address) };
+        if !pdpt_empty {
+            break 'free_page_table;
+        }
+        unsafe {
+            FRAME_ALLOCATOR
+                .lock()
+                .delloc_frame(NonZero::new(pdpt_address).unwrap());
+            PageTable::write_entry(pml4, pml4_index, PageEntry(0));
         }
     }
 
@@ -1012,6 +966,48 @@ fn get_page_table_mapped_physical(page_table: u64, virtual_memory: usize) -> Opt
 
 #[repr(C, align(4096))]
 struct PageTable([PageEntry; 512]);
+
+impl PageTable {
+    /// 根据页表的物理地址获取表中数据
+    /// s: 页表物理地址
+    /// index: 下标
+    unsafe fn get_entry(s: usize, index: usize) -> PageEntry {
+        assert!(s != 0);
+        assert!((s & 0xfff) == 0);
+        assert!(index < 512);
+        unsafe {
+            let mut entry = MaybeUninit::<PageEntry>::uninit();
+            read_memory(s + index * size_of::<PageEntry>(), &mut entry);
+            entry.assume_init()
+        }
+    }
+
+    /// 根据页表的物理地址写表中数据
+    /// s: 页表物理地址
+    /// index: 下标
+    /// entry: 新数据
+    unsafe fn write_entry(s: usize, index: usize, entry: PageEntry) {
+        assert!(s != 0);
+        assert!((s & 0xfff) == 0);
+        assert!(index < 512);
+        unsafe {
+            write_memory(s + index * size_of::<PageEntry>(), &entry);
+        }
+    }
+
+    /// 根据页表的物理地址，判断页表是否已空
+    /// 已空的判断标准：present均为0
+    /// s: 页表物理地址
+    unsafe fn is_all_emptry(s: usize) -> bool {
+        for i in 0..512 {
+            let entry = unsafe { Self::get_entry(s, i) };
+            if entry.present() {
+                return false;
+            }
+        }
+        true
+    }
+}
 
 #[derive(Debug)]
 #[repr(transparent)]

@@ -14,7 +14,7 @@ use alloc::{
 
 use crate::{
     int,
-    memory::{self, physics::AllocFrameHint},
+    memory::{self, physics::AllocateFrameOptions},
     multitask,
     sync::{
         self,
@@ -55,7 +55,11 @@ impl Drop for Thread {
         multitask::async_rt::spawn(async move {
             if let Some(rsp0) = rsp0 {
                 unsafe {
-                    memory::physics::free_mapped_frame(rsp0.get() as usize, RSP0_SIZE);
+                    memory::physics::free_mapped_frame(
+                        memory::physics::kernel_pml4(),
+                        rsp0.get() as usize,
+                        RSP0_SIZE,
+                    );
                 }
             }
 
@@ -123,7 +127,14 @@ pub unsafe fn create_thread(
     context.rip = start_address;
     context.rsp = stack;
     let rsp0 = if process_id.is_some() {
-        let addr = memory::physics::alloc_mapped_frame(RSP0_SIZE, AllocFrameHint::KernelHeap)?;
+        let addr = unsafe {
+            memory::physics::alloc_mapped_frame(
+                memory::physics::kernel_pml4(),
+                RSP0_SIZE,
+                AllocateFrameOptions::KERNEL_DATA,
+            )
+            .ok()?
+        };
         Some(addr.addr().try_into().expect("usize is u64"))
     } else {
         None

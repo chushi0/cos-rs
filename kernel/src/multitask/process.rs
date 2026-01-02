@@ -17,7 +17,7 @@ use crate::{
     int, io,
     memory::{
         self,
-        physics::{AccessMemoryError, AllocFrameHint},
+        physics::{AccessMemoryError, AllocateFrameOptions},
     },
     multitask::{self, elf_loader::ElfLoader},
     sync::{int::IrqGuard, spin::SpinLock},
@@ -109,21 +109,26 @@ pub fn create_process_page(
 ) -> Option<NonZeroU64> {
     let _guard = IrqGuard::cli();
     let page_table = process.lock().page_table;
-    let virtual_ptr = memory::physics::alloc_mapped_frame(
-        size,
-        match page_type {
-            ProcessPageType::Code => AllocFrameHint::UserCode(page_table),
-            ProcessPageType::Stack => AllocFrameHint::UserStack(page_table),
-            ProcessPageType::Data => AllocFrameHint::UserHeap(page_table),
-            ProcessPageType::StaticCode(vaddr) => AllocFrameHint::StaticUserCode(page_table, vaddr),
-            ProcessPageType::StaticData(vaddr) => AllocFrameHint::StaticUserData(page_table, vaddr),
-            ProcessPageType::StaticConst(vaddr) => {
-                AllocFrameHint::StaticUserConst(page_table, vaddr)
-            }
-        },
-    )?;
 
-    virtual_ptr.addr().try_into().ok()
+    let options = match page_type {
+        ProcessPageType::Code => AllocateFrameOptions::USER_CODE,
+        ProcessPageType::Stack => AllocateFrameOptions::USER_DATA,
+        ProcessPageType::Data => AllocateFrameOptions::USER_DATA,
+        ProcessPageType::StaticCode(vaddr) => {
+            AllocateFrameOptions::USER_CODE.with_static_vaddr(vaddr)
+        }
+        ProcessPageType::StaticData(vaddr) => {
+            AllocateFrameOptions::USER_DATA.with_static_vaddr(vaddr)
+        }
+        ProcessPageType::StaticConst(vaddr) => {
+            AllocateFrameOptions::USER_DATA.with_static_vaddr(vaddr)
+        }
+    };
+
+    let virtual_ptr =
+        unsafe { memory::physics::alloc_mapped_frame(page_table.get(), size, options) };
+
+    virtual_ptr.ok()?.addr().try_into().ok()
 }
 
 #[derive(Debug)]

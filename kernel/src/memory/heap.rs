@@ -4,10 +4,7 @@ use core::{
 };
 
 use crate::{
-    memory::{
-        self,
-        physics::{AllocFrameHint, alloc_mapped_frame},
-    },
+    memory::{self, physics::AllocateFrameOptions},
     sync::{int::IrqGuard, spin::SpinLock},
 };
 
@@ -76,17 +73,31 @@ impl KernelHeap {
             if (size & 0xFFF) != 0 {
                 size = (size & !0xFFF) + 0x1000;
             }
-            return match memory::physics::alloc_mapped_frame(size, AllocFrameHint::KernelHeap) {
-                Some(ptr) => ptr.as_ptr(),
-                None => ptr::null_mut(),
+            let allocate = unsafe {
+                memory::physics::alloc_mapped_frame(
+                    memory::physics::kernel_pml4(),
+                    size,
+                    AllocateFrameOptions::KERNEL_DATA,
+                )
+            };
+            return match allocate {
+                Ok(ptr) => ptr.as_ptr(),
+                Err(_) => ptr::null_mut(),
             };
         }
 
         // 桶内的内存不足，申请新内存页
         if self.bucket[index].is_null() {
-            let new_page = match alloc_mapped_frame(0x1000, AllocFrameHint::KernelHeap) {
-                Some(ptr) => ptr.as_ptr(),
-                None => return ptr::null_mut(),
+            let allocate = unsafe {
+                memory::physics::alloc_mapped_frame(
+                    memory::physics::kernel_pml4(),
+                    0x1000,
+                    AllocateFrameOptions::KERNEL_DATA,
+                )
+            };
+            let new_page = match allocate {
+                Ok(ptr) => ptr.as_ptr(),
+                Err(_) => return ptr::null_mut(),
             } as *mut HeapNodeHead;
 
             // 填充新页元数据
@@ -135,7 +146,11 @@ impl KernelHeap {
                 size = (size & !0xFFF) + 0x1000;
             }
             unsafe {
-                memory::physics::free_mapped_frame(ptr as usize, size);
+                memory::physics::free_mapped_frame(
+                    memory::physics::kernel_pml4(),
+                    ptr as usize,
+                    size,
+                );
             }
             return;
         }
@@ -172,7 +187,11 @@ impl KernelHeap {
                         (*(*head).next).prev = (*head).prev;
                     }
                 }
-                memory::physics::free_mapped_frame(head as usize, 0x1000);
+                memory::physics::free_mapped_frame(
+                    memory::physics::kernel_pml4(),
+                    head as usize,
+                    0x1000,
+                );
             }
         }
     }
