@@ -6,8 +6,8 @@ use crate::{
 
 syscall_handler! {
     fn syscall_file_create(path_ptr: u64, path_len: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(path_ptr as usize) ||
-            !memory::physics::is_user_space_virtual_memory((path_ptr + path_len) as usize) {
+        if !memory::page::is_user_space_virtual_memory(path_ptr as usize) ||
+            !memory::page::is_user_space_virtual_memory((path_ptr + path_len) as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
@@ -44,8 +44,8 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_file_open(path_ptr: u64, path_len: u64, handle_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(path_ptr as usize) ||
-            !memory::physics::is_user_space_virtual_memory((path_ptr + path_len) as usize) {
+        if !memory::page::is_user_space_virtual_memory(path_ptr as usize) ||
+            !memory::page::is_user_space_virtual_memory((path_ptr + path_len) as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
@@ -93,9 +93,9 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_file_read(handle: u64, buffer_ptr: u64, buffer_len: u64, read_count_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(buffer_ptr as usize) ||
-            !memory::physics::is_user_space_virtual_memory((buffer_ptr + buffer_len) as usize) ||
-            !memory::physics::is_user_space_virtual_memory(read_count_ptr as usize) {
+        if !memory::page::is_user_space_virtual_memory(buffer_ptr as usize) ||
+            !memory::page::is_user_space_virtual_memory((buffer_ptr + buffer_len) as usize) ||
+            !memory::page::is_user_space_virtual_memory(read_count_ptr as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
@@ -140,9 +140,9 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_file_write(handle: u64, buffer_ptr: u64, buffer_len: u64, write_count_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(buffer_ptr as usize) ||
-            !memory::physics::is_user_space_virtual_memory((buffer_ptr + buffer_len) as usize) ||
-            !memory::physics::is_user_space_virtual_memory(write_count_ptr as usize) {
+        if !memory::page::is_user_space_virtual_memory(buffer_ptr as usize) ||
+            !memory::page::is_user_space_virtual_memory((buffer_ptr + buffer_len) as usize) ||
+            !memory::page::is_user_space_virtual_memory(write_count_ptr as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
@@ -198,7 +198,7 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_file_get_pos(handle: u64, pos_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(pos_ptr as usize) {
+        if !memory::page::is_user_space_virtual_memory(pos_ptr as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 

@@ -37,9 +37,9 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_create_process(exe_ptr: u64, exe_len: u64, process_handle_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(exe_ptr as usize) ||
-            !memory::physics::is_user_space_virtual_memory((exe_ptr + exe_len) as usize) ||
-            !memory::physics::is_user_space_virtual_memory(process_handle_ptr as usize) {
+        if !memory::page::is_user_space_virtual_memory(exe_ptr as usize) ||
+            !memory::page::is_user_space_virtual_memory((exe_ptr + exe_len) as usize) ||
+            !memory::page::is_user_space_virtual_memory(process_handle_ptr as usize) {
                 return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
@@ -90,7 +90,7 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_wait_process(process_handle: u64, exit_code_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(exit_code_ptr as usize) {
+        if !memory::page::is_user_space_virtual_memory(exit_code_ptr as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 

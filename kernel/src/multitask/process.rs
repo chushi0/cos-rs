@@ -17,7 +17,7 @@ use crate::{
     int, io,
     memory::{
         self,
-        physics::{AccessMemoryError, AllocateFrameOptions},
+        page::{AccessMemoryError, AllocateFrameOptions},
     },
     multitask::{self, elf_loader::ElfLoader},
     sync::{int::IrqGuard, spin::SpinLock},
@@ -47,7 +47,7 @@ impl Drop for Process {
     fn drop(&mut self) {
         // 释放页表
         unsafe {
-            memory::physics::release_user_page_table(self.page_table);
+            memory::page::release_user_page_table(self.page_table);
         }
     }
 }
@@ -55,7 +55,7 @@ impl Drop for Process {
 /// 创建进程
 fn create_process() -> Option<Arc<SpinLock<Process>>> {
     // 需要申请一页内存用作四级页表
-    let page_table = memory::physics::alloc_user_page_table()?;
+    let page_table = memory::page::alloc_user_page_table()?;
 
     let process_id = PROCESS_ID_GENERATOR.fetch_add(1, Ordering::SeqCst) + 1;
     let (publisher, subscriber) = watch::pair(0);
@@ -125,8 +125,7 @@ pub fn create_process_page(
         }
     };
 
-    let virtual_ptr =
-        unsafe { memory::physics::alloc_mapped_frame(page_table.get(), size, options) };
+    let virtual_ptr = unsafe { memory::page::alloc_mapped_frame(page_table.get(), size, options) };
 
     virtual_ptr.ok()?.addr().try_into().ok()
 }
@@ -151,11 +150,10 @@ pub unsafe fn write_user_process_memory(
         process.lock().page_table
     };
     unsafe {
-        memory::physics::write_page_table_memory(page_table.get(), addr, src, len).map_err(|e| {
-            match e {
+        memory::page::write_page_table_memory(page_table.get(), addr, src, len)
+            .map_err(|e| match e {
                 AccessMemoryError::PageFault => ProcessMemoryError::PageFault,
-            }
-        })
+            })
     }
 }
 
@@ -180,7 +178,7 @@ pub unsafe fn write_user_process_memory_bytes(
         process.lock().page_table
     };
     unsafe {
-        memory::physics::write_page_table_memory_bytes(page_table.get(), addr, byte, len).map_err(
+        memory::page::write_page_table_memory_bytes(page_table.get(), addr, byte, len).map_err(
             |e| match e {
                 AccessMemoryError::PageFault => ProcessMemoryError::PageFault,
             },
@@ -200,11 +198,11 @@ pub unsafe fn read_user_process_memory(
         process.lock().page_table
     };
     unsafe {
-        memory::physics::read_page_table_memory(page_table.get(), addr, dst, len).map_err(|e| {
-            match e {
+        memory::page::read_page_table_memory(page_table.get(), addr, dst, len).map_err(
+            |e| match e {
                 AccessMemoryError::PageFault => ProcessMemoryError::PageFault,
-            }
-        })
+            },
+        )
     }
 }
 
@@ -282,7 +280,7 @@ pub async fn create_user_process(exe: &str) -> Option<Arc<SpinLock<Process>>> {
 
 // 用户线程入口点
 #[unsafe(naked)]
-extern "C" fn user_thread_entry() -> ! {
+extern "C" fn user_thread_entry() {
     extern "C" fn enter_user_mode(rip: u64, rsp: u64) -> ! {
         unsafe { int::idt::enter_user_mode(rip, rsp) }
     }

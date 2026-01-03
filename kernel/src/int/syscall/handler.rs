@@ -100,7 +100,7 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_debug_get_char(char_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(char_ptr as usize) {
+        if !memory::page::is_user_space_virtual_memory(char_ptr as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
@@ -128,7 +128,7 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_debug_put_char(char_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(char_ptr as usize) {
+        if !memory::page::is_user_space_virtual_memory(char_ptr as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 

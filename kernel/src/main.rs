@@ -36,7 +36,7 @@ pub unsafe extern "C" fn kmain(
     }
     // 初始化内存
     unsafe {
-        memory::physics::init(slice::from_raw_parts(memory_region_ptr, memory_region_len));
+        memory::init(slice::from_raw_parts(memory_region_ptr, memory_region_len));
     }
     // 初始化per-cpu结构
     unsafe {

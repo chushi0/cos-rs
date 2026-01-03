@@ -4,7 +4,7 @@ use core::{
 };
 
 use crate::{
-    memory::{self, physics::AllocateFrameOptions},
+    memory::{self, page::AllocateFrameOptions},
     sync::{int::IrqGuard, spin::SpinLock},
 };
 
@@ -190,8 +190,8 @@ struct PhysicalMemoryPageProvider;
 impl MemoryPageProvider for PhysicalMemoryPageProvider {
     fn allocate_pages(&mut self, size: usize) -> Option<NonNull<u8>> {
         unsafe {
-            memory::physics::alloc_mapped_frame(
-                memory::physics::kernel_pml4(),
+            memory::page::alloc_mapped_frame(
+                memory::page::kernel_pml4(),
                 size,
                 AllocateFrameOptions::KERNEL_DATA,
             )
@@ -201,8 +201,8 @@ impl MemoryPageProvider for PhysicalMemoryPageProvider {
 
     fn deallocate_pages(&mut self, address: NonNull<u8>, size: usize) {
         unsafe {
-            memory::physics::free_mapped_frame(
-                memory::physics::kernel_pml4(),
+            memory::page::free_mapped_frame(
+                memory::page::kernel_pml4(),
                 address.as_ptr() as usize,
                 size,
             );

@@ -7,7 +7,7 @@ use crate::{
 
 syscall_handler! {
     fn syscall_alloc_page(count: u64, addr_ptr: u64) -> u64 {
-        if !memory::physics::is_user_space_virtual_memory(addr_ptr as usize) {
+        if !memory::page::is_user_space_virtual_memory(addr_ptr as usize) {
             return cos_sys::error::ErrorKind::SegmentationFault as u64;
         }
 
