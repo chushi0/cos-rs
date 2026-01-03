@@ -1,8 +1,8 @@
 use crate::{
-    trap::syscall::SYSCALL_SUCCESS,
     memory,
     multitask::{self, process::ProcessPageType},
     syscall_handler,
+    trap::syscall::SYSCALL_SUCCESS,
 };
 
 syscall_handler! {
@@ -25,6 +25,26 @@ syscall_handler! {
             if multitask::process::write_user_process_memory_struct(&process, addr_ptr, &addr).is_err() {
                 return cos_sys::error::ErrorKind::SegmentationFault as u64;
             }
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn syscall_free_page(addr: u64, count: u64) -> u64 {
+        if !memory::page::is_user_space_virtual_memory(addr as usize)
+            || !memory::page::is_user_space_virtual_memory((addr + count * 0x1000) as usize) {
+            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+        }
+
+        if count == 0 {
+            return SYSCALL_SUCCESS;
+        }
+
+        let process = multitask::process::current_process().unwrap();
+        unsafe {
+            multitask::process::free_process_page(&process, addr as usize, (count * 0x1000) as usize);
         }
 
         SYSCALL_SUCCESS

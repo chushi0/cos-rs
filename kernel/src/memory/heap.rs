@@ -15,8 +15,8 @@ static KERNEL_HEAP: SpinLock<RustHeap<PhysicalMemoryPageProvider>> =
 
 struct PhysicalMemoryPageProvider;
 
-impl MemoryPageProvider for PhysicalMemoryPageProvider {
-    fn allocate_pages(&mut self, size: usize) -> Option<NonNull<u8>> {
+unsafe impl MemoryPageProvider for PhysicalMemoryPageProvider {
+    unsafe fn allocate_pages(&mut self, size: usize) -> Option<NonNull<u8>> {
         unsafe {
             memory::page::alloc_mapped_frame(
                 memory::page::kernel_pml4(),
@@ -27,7 +27,7 @@ impl MemoryPageProvider for PhysicalMemoryPageProvider {
         }
     }
 
-    fn deallocate_pages(&mut self, address: NonNull<u8>, size: usize) {
+    unsafe fn deallocate_pages(&mut self, address: NonNull<u8>, size: usize) {
         unsafe {
             memory::page::free_mapped_frame(
                 memory::page::kernel_pml4(),
@@ -54,7 +54,7 @@ unsafe impl GlobalAlloc for GlobalAllocator {
         unsafe {
             KERNEL_HEAP
                 .lock()
-                .deallocate(NonNull::new_unchecked(ptr), layout);
+                .deallocate(NonNull::new(ptr).unwrap(), layout);
         }
     }
 }

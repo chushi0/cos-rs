@@ -339,7 +339,7 @@ fn find_free_virtual_memory(
     let mut remain = block;
 
     while i < search_end {
-        let page_free = unsafe { is_page_free(NonZeroUsize::new_unchecked(i), pml4) };
+        let page_free = unsafe { is_page_free(NonZeroUsize::new(i).unwrap(), pml4) };
         i += 0x1000;
         if page_free {
             remain -= 1;

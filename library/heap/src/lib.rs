@@ -22,13 +22,13 @@ const fn free_count(size: usize) -> u64 {
     ((0x1000 - size_of::<HeapNodeHead>()) / size) as u64
 }
 
-pub trait MemoryPageProvider {
-    fn allocate_page(&mut self) -> Option<NonNull<u8>> {
-        self.allocate_pages(0x1000)
+pub unsafe trait MemoryPageProvider {
+    unsafe fn allocate_page(&mut self) -> Option<NonNull<u8>> {
+        unsafe { self.allocate_pages(0x1000) }
     }
 
-    fn allocate_pages(&mut self, size: usize) -> Option<NonNull<u8>>;
-    fn deallocate_pages(&mut self, address: NonNull<u8>, size: usize);
+    unsafe fn allocate_pages(&mut self, size: usize) -> Option<NonNull<u8>>;
+    unsafe fn deallocate_pages(&mut self, address: NonNull<u8>, size: usize);
 }
 
 pub struct RustHeap<P> {
@@ -71,7 +71,7 @@ impl<P: MemoryPageProvider> RustHeap<P> {
             if (size & 0xFFF) != 0 {
                 size = (size & !0xFFF) + 0x1000;
             }
-            return match self.provider.allocate_pages(size) {
+            return match unsafe { self.provider.allocate_pages(size) } {
                 Some(ptr) => ptr.as_ptr(),
                 None => ptr::null_mut(),
             };
@@ -79,7 +79,7 @@ impl<P: MemoryPageProvider> RustHeap<P> {
 
         // 桶内的内存不足，申请新内存页
         if self.bucket[index].is_null() {
-            let new_page = match self.provider.allocate_page() {
+            let new_page = match unsafe { self.provider.allocate_page() } {
                 Some(ptr) => ptr.as_ptr(),
                 None => return ptr::null_mut(),
             } as *mut HeapNodeHead;
@@ -127,7 +127,9 @@ impl<P: MemoryPageProvider> RustHeap<P> {
             if (size & 0xFFF) != 0 {
                 size = (size & !0xFFF) + 0x1000;
             }
-            self.provider.deallocate_pages(ptr, size);
+            unsafe {
+                self.provider.deallocate_pages(ptr, size);
+            }
             return;
         }
 
@@ -165,7 +167,7 @@ impl<P: MemoryPageProvider> RustHeap<P> {
                     }
                 }
                 self.provider
-                    .deallocate_pages(NonNull::new_unchecked(head.cast::<u8>()), 0x1000);
+                    .deallocate_pages(NonNull::new(head.cast::<u8>()).unwrap(), 0x1000);
             }
         }
     }

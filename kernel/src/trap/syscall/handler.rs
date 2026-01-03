@@ -1,10 +1,10 @@
 use core::{cmp::Ordering, mem::MaybeUninit};
 
 use crate::{
-    trap::syscall::{SYSCALL_SUCCESS, SyscallEntry},
     io, kprint, kprintln, memory, multitask,
     sync::{int::IrqGuard, percpu},
     syscall_handler,
+    trap::syscall::{SYSCALL_SUCCESS, SyscallEntry},
 };
 
 mod syscall_file;
@@ -29,7 +29,10 @@ pub const SYSCALL_HANDLER: &[SyscallEntry] = &[
         cos_sys::idx::IDX_MEMORY_ALLOC,
         syscall_memory::syscall_alloc_page,
     ),
-    (cos_sys::idx::IDX_MEMORY_FREE, syscall_test),
+    (
+        cos_sys::idx::IDX_MEMORY_FREE,
+        syscall_memory::syscall_free_page,
+    ),
     (cos_sys::idx::IDX_MEMORY_TEST, syscall_test),
     (cos_sys::idx::IDX_MEMORY_MODIFY, syscall_test),
     (cos_sys::idx::IDX_PROCESS_CURRENT, syscall_test),

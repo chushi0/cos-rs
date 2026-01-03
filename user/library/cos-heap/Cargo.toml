@@ -1,0 +1,8 @@
+[package]
+edition = "2024"
+name = "cos-heap"
+version = "0.1.0"
+
+[dependencies]
+cos-sys = {path = "../cos-sys"}
+heap = {path = "../../../library/heap"}

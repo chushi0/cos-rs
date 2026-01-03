@@ -4,5 +4,6 @@ name = "shell"
 version = "0.1.0"
 
 [dependencies]
+cos-heap = {path = "../../library/cos-heap"}
 cos-sys = {path = "../../library/cos-sys"}
 rlibc = "1.0.0"

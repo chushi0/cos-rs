@@ -3,6 +3,7 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(test_runner)]
 
+extern crate alloc;
 extern crate rlibc;
 
 use cos_sys::{
@@ -10,6 +11,8 @@ use cos_sys::{
     file::{close, open, read},
     multitask::exit,
 };
+
+cos_heap::default_heap!();
 
 #[unsafe(export_name = "_start")]
 fn main() -> ! {
@@ -93,7 +96,7 @@ fn print(string: &[u8]) {
 
 fn print_welcome_file() {
     let file = open(b"/system/welcome.txt").unwrap();
-    let mut buffer = [0u8; 512];
+    let mut buffer = alloc::vec![0u8; 8192];
     loop {
         let read_count = read(file, buffer.as_mut_slice()).unwrap() as usize;
         if read_count == 0 {

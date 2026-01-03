@@ -131,6 +131,16 @@ pub fn create_process_page(
     virtual_ptr.ok()?.addr().try_into().ok()
 }
 
+/// 释放进程内存页
+pub unsafe fn free_process_page(process: &SpinLock<Process>, addr: usize, size: usize) {
+    let _guard = IrqGuard::cli();
+    let page_table = process.lock().page_table;
+
+    unsafe {
+        memory::page::free_mapped_frame(page_table.get(), addr, size);
+    }
+}
+
 #[derive(Debug)]
 pub enum ProcessMemoryError {
     /// 进程不存在
