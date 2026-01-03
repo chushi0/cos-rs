@@ -24,3 +24,7 @@ dependencies = [
  "async_io",
  "async_locks",
 ]
+
+[[package]]
+name = "heap"
+version = "0.1.0"
