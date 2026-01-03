@@ -199,24 +199,24 @@ macro_rules! syscall_handler {
     };
 
     (fn $name:ident() { $($t:tt)* }) => {
-        pub extern "C" fn $name(_p1: u64, _p2: u64, _p3: u64, _p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::int::syscall::SYSCALL_SUCCESS }
+        pub extern "C" fn $name(_p1: u64, _p2: u64, _p3: u64, _p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::trap::syscall::SYSCALL_SUCCESS }
     };
     (fn $name:ident($p1:ident: u64) { $($t:tt)* }) => {
-        pub extern "C" fn $name($p1: u64, _p2: u64, _p3: u64, _p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::int::syscall::SYSCALL_SUCCESS }
+        pub extern "C" fn $name($p1: u64, _p2: u64, _p3: u64, _p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::trap::syscall::SYSCALL_SUCCESS }
     };
     (fn $name:ident($p1:ident: u64, $p2:ident: u64) { $($t:tt)* }) => {
-        pub extern "C" fn $name($p1: u64, $p2: u64, _p3: u64, _p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::int::syscall::SYSCALL_SUCCESS }
+        pub extern "C" fn $name($p1: u64, $p2: u64, _p3: u64, _p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::trap::syscall::SYSCALL_SUCCESS }
     };
     (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64) { $($t:tt)* }) => {
-        pub extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, _p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::int::syscall::SYSCALL_SUCCESS }
+        pub extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, _p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::trap::syscall::SYSCALL_SUCCESS }
     };
     (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64, $p4:ident: u64) { $($t:tt)* }) => {
-        pub extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::int::syscall::SYSCALL_SUCCESS }
+        pub extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, _p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::trap::syscall::SYSCALL_SUCCESS }
     };
     (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64, $p4:ident: u64, $p5:ident: u64) { $($t:tt)* }) => {
-        pub extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, $p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::int::syscall::SYSCALL_SUCCESS }
+        pub extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, $p5: u64, _p6: u64) -> u64 { (|| { $($t)* })(); $crate::trap::syscall::SYSCALL_SUCCESS }
     };
     (fn $name:ident($p1:ident: u64, $p2:ident: u64, $p3:ident: u64, $p4:ident: u64, $p5:ident: u64, $p6:ident: u64) { $($t:tt)* }) => {
-        pub extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, $p5: u64, $p6: u64) -> u64 { (|| { $($t)* })(); $crate::int::syscall::SYSCALL_SUCCESS }
+        pub extern "C" fn $name($p1: u64, $p2: u64, $p3: u64, $p4: u64, $p5: u64, $p6: u64) -> u64 { (|| { $($t)* })(); $crate::trap::syscall::SYSCALL_SUCCESS }
     };
 }

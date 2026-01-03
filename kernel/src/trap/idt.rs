@@ -3,7 +3,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use crate::int::{hard, soft, tss};
+use crate::trap::{hard, soft, tss};
 
 /// 中断描述符表
 #[repr(transparent)]

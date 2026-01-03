@@ -1,7 +1,7 @@
 use core::arch::asm;
 
 use crate::{
-    int::idt::{StackFrame, StackFrameWithErrorCode},
+    trap::idt::{StackFrame, StackFrameWithErrorCode},
     interrupt_handler, kprintln, multitask, sync,
 };
 

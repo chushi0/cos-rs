@@ -1,7 +1,7 @@
 use core::{cmp::Ordering, mem::MaybeUninit};
 
 use crate::{
-    int::syscall::{SYSCALL_SUCCESS, SyscallEntry},
+    trap::syscall::{SYSCALL_SUCCESS, SyscallEntry},
     io, kprint, kprintln, memory, multitask,
     sync::{int::IrqGuard, percpu},
     syscall_handler,

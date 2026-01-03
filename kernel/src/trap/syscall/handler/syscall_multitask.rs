@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 
 use crate::{
-    int::syscall::SYSCALL_SUCCESS, memory, multitask, syscall_handler, user::handle::HandleObject,
+    trap::syscall::SYSCALL_SUCCESS, memory, multitask, syscall_handler, user::handle::HandleObject,
 };
 
 syscall_handler! {

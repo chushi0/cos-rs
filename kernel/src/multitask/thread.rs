@@ -13,7 +13,6 @@ use alloc::{
 };
 
 use crate::{
-    int,
     memory::{self, page::AllocateFrameOptions},
     multitask,
     sync::{
@@ -21,6 +20,7 @@ use crate::{
         int::{IrqGuard, sti},
         spin::SpinLock,
     },
+    trap,
 };
 
 static THREADS: SpinLock<BTreeMap<u64, Arc<SpinLock<Thread>>>> = SpinLock::new(BTreeMap::new());
@@ -379,7 +379,7 @@ unsafe fn switch_thread(
             } else {
                 0
             };
-            int::tss::set_rsp0(addr);
+            trap::tss::set_rsp0(addr);
             sync::percpu::set_syscall_stack(addr);
             // 设置页表
             let pml4 = if let Some(process_id) = process_id

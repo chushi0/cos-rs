@@ -14,13 +14,14 @@ use elf::ElfFile;
 use filesystem::path::PathBuf;
 
 use crate::{
-    int, io,
+    io,
     memory::{
         self,
         page::{AccessMemoryError, AllocateFrameOptions},
     },
     multitask::{self, elf_loader::ElfLoader},
     sync::{int::IrqGuard, spin::SpinLock},
+    trap,
     user::handle::HandleObject,
 };
 
@@ -282,7 +283,7 @@ pub async fn create_user_process(exe: &str) -> Option<Arc<SpinLock<Process>>> {
 #[unsafe(naked)]
 extern "C" fn user_thread_entry() {
     extern "C" fn enter_user_mode(rip: u64, rsp: u64) -> ! {
-        unsafe { int::idt::enter_user_mode(rip, rsp) }
+        unsafe { trap::idt::enter_user_mode(rip, rsp) }
     }
     naked_asm!(
         "mov rdi, [rsp]",

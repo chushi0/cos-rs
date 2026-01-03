@@ -1,5 +1,5 @@
 use crate::{
-    int::syscall::SYSCALL_SUCCESS,
+    trap::syscall::SYSCALL_SUCCESS,
     memory,
     multitask::{self, process::ProcessPageType},
     syscall_handler,

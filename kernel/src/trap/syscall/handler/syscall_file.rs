@@ -1,5 +1,5 @@
 use crate::{
-    int::syscall::SYSCALL_SUCCESS,
+    trap::syscall::SYSCALL_SUCCESS,
     io, memory, multitask, syscall_handler,
     user::handle::{FileHandleObject, HandleObject},
 };
