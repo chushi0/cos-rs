@@ -35,6 +35,10 @@ pub const IDX_THREAD_CREATE: u64 = 0x200005;
 ///
 /// 函数封装为 [crate::multitask::join_thread]
 pub const IDX_THREAD_JOIN: u64 = 0x200006;
+/// 线程休眠
+///
+/// 函数封装为 [crate::multitask::sleep_thread]
+pub const IDX_THREAD_SLEEP: u64 = 0x200007;
 
 /// 申请内存页，内存页默认为可读写不可执行
 ///

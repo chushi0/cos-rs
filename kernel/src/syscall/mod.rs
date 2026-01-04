@@ -18,6 +18,7 @@ pub const SYSCALL_HANDLER: &[SyscallEntry] = &[
     (cos_sys::idx::IDX_THREAD_KILL, multitask::kill_thread),
     (cos_sys::idx::IDX_THREAD_CREATE, multitask::create_thread),
     (cos_sys::idx::IDX_THREAD_JOIN, multitask::join_thread),
+    (cos_sys::idx::IDX_THREAD_SLEEP, multitask::sleep_thread),
     (cos_sys::idx::IDX_MEMORY_ALLOC, memory::alloc_page),
     (cos_sys::idx::IDX_MEMORY_FREE, memory::free_page),
     (cos_sys::idx::IDX_PROCESS_CURRENT, multitask::current_process),

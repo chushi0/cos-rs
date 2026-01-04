@@ -1,3 +1,5 @@
+use core::time::Duration;
+
 use alloc::sync::Arc;
 use async_locks::channel::oneshot;
 
@@ -175,6 +177,18 @@ syscall_handler! {
             if multitask::process::write_user_process_memory_struct(&process, exit_code_ptr, &code).is_err() {
                 return cos_sys::error::ErrorKind::BadPointer as u64;
             }
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn sleep_thread(time_in_seconds: u64, time_in_ns: u64) {
+        let duration = Duration::new(time_in_seconds, time_in_ns as u32);
+        let sleep = multitask::async_task::sleep(duration);
+        if multitask::async_rt::block_on(sleep).is_err() {
+            thread_yield(true);
         }
 
         SYSCALL_SUCCESS
