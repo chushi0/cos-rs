@@ -9,7 +9,8 @@ use crate::{display, sync};
 
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
-pub fn panic_entry(info: &PanicInfo) -> ! {
+#[panic_handler]
+fn panic_entry(info: &PanicInfo) -> ! {
     // 关闭中断
     // TODO: 多核情况，需要通知其他核结束工作
     sync::int::cli();
@@ -35,16 +36,7 @@ fn auto_dump_and_print_blue_screen(info: &PanicInfo) -> ! {
     // 打印蓝屏消息
     // writeln不依赖堆，可以使用
     // 不要在这里进行任何堆分配！！
-    _ = writeln!(
-        writer,
-        "A PROBLEM HAS BEEN DETECTED AND COS HAS BEEN SHUT DOWN TO PREVENT DAMAGE TO YOUR COMPUTER."
-    );
-    _ = writeln!(writer, "");
-    _ = writeln!(
-        writer,
-        "The system encountered a fatal condition from which it cannot recover."
-    );
-    _ = writeln!(writer, "");
+    bluescreen_print_header(&mut writer);
 
     _ = writeln!(writer, "Technical information:");
     _ = writeln!(writer, "");
@@ -59,20 +51,6 @@ fn auto_dump_and_print_blue_screen(info: &PanicInfo) -> ! {
     }
     _ = writeln!(writer, "*** MESSAGE: {}", info.message());
     _ = writeln!(writer, "");
-    _ = writeln!(
-        writer,
-        "If this is the first time you have seen this Stop error screen, restart your system. If this screen appears again, follow these steps:"
-    );
-    _ = writeln!(writer, "");
-    _ = writeln!(
-        writer,
-        "* If problems continue, disable or remove any newly installed components."
-    );
-    _ = writeln!(
-        writer,
-        "* Contact your system administrator or kernel developer for assistance."
-    );
-    _ = writeln!(writer, "");
     _ = writeln!(writer, "The system has been halted.");
     _ = writeln!(writer, "");
     _ = writeln!(writer, "STOP: 0x0000007E (KERNEL_PANIC)");
@@ -83,7 +61,21 @@ fn auto_dump_and_print_blue_screen(info: &PanicInfo) -> ! {
 
 fn print_static_blue_screen() -> ! {
     let mut writer = unsafe { display::vga_text::VgaTextWriter::with_style(0x1f) };
+    bluescreen_print_header(&mut writer);
 
+    _ = writeln!(writer, "Technical information:");
+    _ = writeln!(writer, "");
+    _ = writeln!(writer, "*** MESSAGE: DOUBLE PANIC DETECTED");
+    _ = writeln!(writer, "");
+    _ = writeln!(writer, "The system has been halted.");
+    _ = writeln!(writer, "");
+    _ = writeln!(writer, "STOP: 0x0000007F (KERNEL_DOUBLE_PANIC)");
+    _ = writeln!(writer, "");
+
+    loop_hlt()
+}
+
+fn bluescreen_print_header<W: Write>(writer: &mut W) {
     _ = writeln!(
         writer,
         "A PROBLEM HAS BEEN DETECTED AND COS HAS BEEN SHUT DOWN TO PREVENT DAMAGE TO YOUR COMPUTER."
@@ -95,10 +87,6 @@ fn print_static_blue_screen() -> ! {
     );
     _ = writeln!(writer, "");
 
-    _ = writeln!(writer, "Technical information:");
-    _ = writeln!(writer, "");
-    _ = writeln!(writer, "*** MESSAGE: DOUBLE PANIC DETECTED");
-    _ = writeln!(writer, "");
     _ = writeln!(
         writer,
         "If this is the first time you have seen this Stop error screen, restart your system. If this screen appears again, follow these steps:"
@@ -113,12 +101,6 @@ fn print_static_blue_screen() -> ! {
         "* Contact your system administrator or kernel developer for assistance."
     );
     _ = writeln!(writer, "");
-    _ = writeln!(writer, "The system has been halted.");
-    _ = writeln!(writer, "");
-    _ = writeln!(writer, "STOP: 0x0000007F (KERNEL_DOUBLE_PANIC)");
-    _ = writeln!(writer, "");
-
-    loop_hlt()
 }
 
 fn restart_emergency() -> ! {

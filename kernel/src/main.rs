@@ -78,10 +78,5 @@ pub unsafe extern "C" fn kmain(
     multitask::async_rt::run()
 }
 
-#[panic_handler]
-fn on_panic(info: &core::panic::PanicInfo) -> ! {
-    panicking::panic_entry(info)
-}
-
 #[cfg(test)]
 fn test_runner(_test_cases: &[&dyn Fn()]) {}
