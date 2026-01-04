@@ -4,11 +4,7 @@ use alloc::sync::Arc;
 use async_locks::channel::oneshot;
 
 use crate::{
-    memory,
-    multitask::{self, thread::thread_yield},
-    syscall::SYSCALL_SUCCESS,
-    syscall_handler,
-    user::handle::HandleObject,
+    memory, multitask, syscall::SYSCALL_SUCCESS, syscall_handler, user::handle::HandleObject,
 };
 
 syscall_handler! {
@@ -80,7 +76,7 @@ syscall_handler! {
             _ = receiver.recv().await;
         });
         if wait.is_err() {
-            thread_yield(true);
+            return cos_sys::error::ErrorKind::Unknown as u64;
         }
 
         SYSCALL_SUCCESS
@@ -185,13 +181,16 @@ syscall_handler! {
 
 syscall_handler! {
     fn sleep_thread(time_in_seconds: u64, time_in_ns: u64) {
-        let duration = Duration::new(time_in_seconds, time_in_ns as u32);
-        let sleep = multitask::async_task::sleep(duration);
-        if multitask::async_rt::block_on(sleep).is_err() {
-            thread_yield(true);
+        let mut time_in_seconds = time_in_seconds;
+        let mut time_in_ns = time_in_ns;
+        if time_in_ns > 1_000_000_000 {
+            time_in_seconds = time_in_seconds.saturating_add(time_in_ns / 1_000_000_000);
+            time_in_ns = time_in_ns % 1_000_000_000;
         }
 
-        SYSCALL_SUCCESS
+        let duration = Duration::new(time_in_seconds, time_in_ns as u32);
+        let sleep = multitask::async_task::sleep(duration);
+        _ = multitask::async_rt::block_on(sleep);
     }
 }
 
