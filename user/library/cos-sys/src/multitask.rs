@@ -200,6 +200,6 @@ pub fn join_thread(thread_handle: u64) -> Result<u64> {
 
 /// 线程休眠
 pub fn sleep_thread(time_in_seconds: u64, time_in_ns: u64) -> Result<()> {
-    let error = unsafe { syscall!(idx::IDX_THREAD_JOIN, time_in_seconds, time_in_ns) };
+    let error = unsafe { syscall!(idx::IDX_THREAD_SLEEP, time_in_seconds, time_in_ns) };
     SyscallError::to_result(error)
 }

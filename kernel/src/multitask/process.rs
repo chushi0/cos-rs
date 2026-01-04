@@ -298,7 +298,7 @@ pub async fn create_user_process(exe: &str) -> Option<Arc<SpinLock<Process>>> {
         multitask::thread::create_thread(
             Some(&mut *process.lock()),
             user_thread_entry as u64,
-            rsp0 as u64 + 0x1000 - 8 - 16,
+            rsp0 as u64 + RSP0_SIZE as u64 - 8 - 16,
             rsp0 as u64,
             false,
         );
@@ -313,7 +313,7 @@ pub fn create_user_thread(
     rsp: u64,
     params: u64,
 ) -> Option<Arc<SpinLock<Thread>>> {
-    // 主线程内核陷入栈
+    // 线程内核陷入栈
     let rsp0 = unsafe {
         let _guard = IrqGuard::cli();
         memory::page::alloc_mapped_frame(
@@ -338,7 +338,7 @@ pub fn create_user_thread(
         multitask::thread::create_thread(
             Some(&mut *process.lock()),
             user_thread_entry as u64,
-            rsp0 as u64 + 0x1000 - 8 - 16,
+            rsp0 as u64 + RSP0_SIZE as u64 - 8 - 16,
             rsp0 as u64,
             false,
         );
@@ -350,8 +350,8 @@ pub fn create_user_thread(
 // 用户线程入口点
 #[unsafe(naked)]
 extern "C" fn user_thread_entry() {
-    extern "C" fn enter_user_mode(rip: u64, rsp: u64) -> ! {
-        unsafe { trap::idt::enter_user_mode(rip, rsp, 0) }
+    extern "C" fn enter_user_mode(rip: u64, rsp: u64, rdi: u64) -> ! {
+        unsafe { trap::idt::enter_user_mode(rip, rsp, rdi) }
     }
     naked_asm!(
         "mov rdi, [rsp+16]",

@@ -90,6 +90,7 @@ fn process_command(cmd: &[u8]) -> bool {
             .and_then(|s| s.parse::<u64>().ok())
         {
             sleep_thread(time_in_ms / 1000, time_in_ms % 1000 * 1000).unwrap();
+            return false;
         }
     }
 
