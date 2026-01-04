@@ -4,6 +4,7 @@ use core::{
     num::NonZeroU64,
     ptr::{self, null_mut},
     sync::atomic::{AtomicU64, Ordering},
+    task::Waker,
 };
 
 use alloc::{
@@ -50,6 +51,8 @@ pub struct Thread {
     exit_code: watch::Publisher<u64>,
     // 为其他线程wait预留
     exit_code_sub: watch::Subscriber<u64>,
+    // 异步任务执行时的唤醒对象
+    waker: Option<Waker>,
 }
 
 impl Drop for Thread {
@@ -159,6 +162,7 @@ pub unsafe fn create_thread(
         rsp0,
         exit_code: publisher,
         exit_code_sub: subscriber,
+        waker: None,
     };
     let thread = Arc::new(SpinLock::new(thread));
 
@@ -208,6 +212,7 @@ pub fn create_idle_thread() {
         rsp0: None,
         exit_code: publisher,
         exit_code_sub: subscriber,
+        waker: None,
     };
     let thread = Arc::new(SpinLock::new(thread));
 
@@ -232,6 +237,7 @@ pub fn create_kernel_async_thread() {
         rsp0: None,
         exit_code: publisher,
         exit_code_sub: subscriber,
+        waker: None,
     };
     let thread = Arc::new(SpinLock::new(thread));
 
@@ -673,6 +679,10 @@ pub fn stop_thread(thread: &SpinLock<Thread>, exit_code: u64) {
     }
     thread.status = ThreadStatus::Terminating;
     thread.exit_code.send(exit_code);
+    // 如果此线程正在等待，将其唤醒
+    if let Some(waker) = &thread.waker {
+        waker.wake_by_ref();
+    }
     // TODO: 多CPU - 如果线程仍处于Running状态，通过中断提醒对方结束
 }
 
@@ -694,4 +704,9 @@ pub fn thread_boundry_check() -> bool {
         current_thread.lock().status
     };
     matches!(status, ThreadStatus::Terminating)
+}
+
+pub(super) fn register_waker(thread: &SpinLock<Thread>, waker: Option<Waker>) {
+    let _guard = IrqGuard::cli();
+    thread.lock().waker = waker;
 }

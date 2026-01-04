@@ -314,8 +314,9 @@ where
     // pin future
     let mut future = pin!(future);
     // waker构造
+    let current_thread = multitask::thread::current_thread().unwrap();
     let waker_inner = Arc::new(BlockOnWakerInner {
-        thread: Arc::downgrade(&multitask::thread::current_thread().unwrap()),
+        thread: Arc::downgrade(&current_thread),
         pending: SpinLock::new(false),
     });
     let waker = unsafe {
@@ -323,12 +324,16 @@ where
         Waker::from_raw(RawWaker::new(data, &BLOCK_ON_WAKER_VTABLE))
     };
 
+    // 将waker注册到线程中，当线程被kill时唤醒
+    multitask::thread::register_waker(&current_thread, Some(waker.clone()));
+
     loop {
         // 标记pending=true，表示当前返回后需要等待
         *waker_inner.pending.lock() = true;
 
         // 检查线程是否需要退出
         if multitask::thread::thread_boundry_check() {
+            multitask::thread::register_waker(&current_thread, None);
             return Err(ThreadTerminated);
         }
 
@@ -338,6 +343,7 @@ where
 
         // 检查结果
         if let Poll::Ready(result) = result {
+            multitask::thread::register_waker(&current_thread, None);
             return Ok(result);
         }
 
