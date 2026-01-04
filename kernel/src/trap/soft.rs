@@ -1,8 +1,8 @@
 use core::arch::asm;
 
 use crate::{
-    trap::idt::{StackFrame, StackFrameWithErrorCode},
     interrupt_handler, kprintln, multitask, sync,
+    trap::idt::{StackFrame, StackFrameWithErrorCode},
 };
 
 interrupt_handler! {
@@ -94,7 +94,7 @@ fn user_kill_self(cs: u64) {
     {
         let thread_id = sync::percpu::get_current_thread_id();
         let thread = multitask::thread::get_thread(thread_id).unwrap();
-        multitask::thread::stop_thread(&thread);
+        multitask::thread::stop_thread(&thread, cos_sys::multitask::EXIT_KILL);
     }
 
     multitask::thread::thread_yield(true);

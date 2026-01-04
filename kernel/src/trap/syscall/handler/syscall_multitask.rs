@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 
 use crate::{
-    trap::syscall::SYSCALL_SUCCESS, memory, multitask, syscall_handler, user::handle::HandleObject,
+    memory, multitask, syscall_handler, trap::syscall::SYSCALL_SUCCESS, user::handle::HandleObject,
 };
 
 syscall_handler! {
@@ -11,7 +11,7 @@ syscall_handler! {
         {
             let process = multitask::process::current_process().unwrap();
             multitask::process::set_exit_code(&process, code);
-            multitask::process::stop_all_thread(&process);
+            multitask::process::stop_all_thread(&process, code);
         }
 
         multitask::thread::thread_yield(true);
@@ -23,11 +23,9 @@ syscall_handler! {
 
 syscall_handler! {
     fn syscall_exit_thread(code: u64) {
-        // TODO: 当前未实现线程退出码
-        _ = code;
         {
             let current_thread = multitask::thread::current_thread().unwrap();
-            multitask::thread::stop_thread(&current_thread);
+            multitask::thread::stop_thread(&current_thread, code);
         }
 
         multitask::thread::thread_yield(true);

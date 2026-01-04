@@ -11,6 +11,7 @@ use alloc::{
     collections::{btree_map::BTreeMap, vec_deque::VecDeque},
     sync::{Arc, Weak},
 };
+use async_locks::watch;
 
 use crate::{
     memory::{self, page::AllocateFrameOptions},
@@ -36,15 +37,19 @@ const RSP0_SIZE: usize = 0x1000 * RSP0_PAGE_COUNT;
 // 内核线程或用户线程
 pub struct Thread {
     // 线程ID
-    pub thread_id: u64,
+    thread_id: u64,
     // 进程ID，None表示内核进程
     pub process_id: Option<NonZeroU64>,
     // 上下文，如果当前为Running状态，则此值未定义
-    pub context: Context,
+    context: Context,
     // 线程状态
-    pub status: ThreadStatus,
+    status: ThreadStatus,
     // rsp0 进入内核切换栈地址（低地址）
-    pub rsp0: Option<NonZeroU64>,
+    rsp0: Option<NonZeroU64>,
+    // 退出码
+    exit_code: watch::Publisher<u64>,
+    // 为其他线程wait预留
+    exit_code_sub: watch::Subscriber<u64>,
 }
 
 impl Drop for Thread {
@@ -52,6 +57,7 @@ impl Drop for Thread {
         let thread_id = self.thread_id;
         let rsp0 = self.rsp0.take();
         let process_id = self.process_id.take();
+        let exit_code = *self.exit_code_sub.borrow();
         multitask::async_rt::spawn(async move {
             if let Some(rsp0) = rsp0 {
                 unsafe {
@@ -69,6 +75,7 @@ impl Drop for Thread {
                     let mut process = process.lock();
                     process.thread_ids.remove(&thread_id);
                     if process.thread_ids.is_empty() {
+                        multitask::process::set_exit_code_with_lock(&mut *process, exit_code);
                         multitask::process::stop_process(process_id.get());
                     }
                 }
@@ -139,6 +146,7 @@ pub unsafe fn create_thread(
     } else {
         None
     };
+    let (publisher, subscriber) = watch::pair(0);
     let thread = Thread {
         thread_id,
         process_id,
@@ -149,6 +157,8 @@ pub unsafe fn create_thread(
             ThreadStatus::Ready
         },
         rsp0,
+        exit_code: publisher,
+        exit_code_sub: subscriber,
     };
     let thread = Arc::new(SpinLock::new(thread));
 
@@ -189,12 +199,15 @@ pub fn create_idle_thread() {
     let mut context = Context::uninit();
     context.rsp = stack;
     context.rip = idle_thread_entry as u64;
+    let (publisher, subscriber) = watch::pair(0);
     let thread = Thread {
         thread_id,
         process_id: None,
         context,
         status: ThreadStatus::Running,
         rsp0: None,
+        exit_code: publisher,
+        exit_code_sub: subscriber,
     };
     let thread = Arc::new(SpinLock::new(thread));
 
@@ -210,12 +223,15 @@ pub fn create_idle_thread() {
 pub fn create_kernel_async_thread() {
     let thread_id = THREAD_ID_GENERATOR.fetch_add(1, Ordering::SeqCst) + 1;
     let context = Context::uninit();
+    let (publisher, subscriber) = watch::pair(0);
     let thread = Thread {
         thread_id,
         process_id: None,
         context,
         status: ThreadStatus::Running,
         rsp0: None,
+        exit_code: publisher,
+        exit_code_sub: subscriber,
     };
     let thread = Arc::new(SpinLock::new(thread));
 
@@ -647,9 +663,16 @@ fn try_yield_thread() {
     }
 }
 
-pub fn stop_thread(thread: &SpinLock<Thread>) {
+pub fn stop_thread(thread: &SpinLock<Thread>, exit_code: u64) {
     let mut thread = thread.lock();
+    if matches!(
+        thread.status,
+        ThreadStatus::Terminated | ThreadStatus::Terminating
+    ) {
+        return;
+    }
     thread.status = ThreadStatus::Terminating;
+    thread.exit_code.send(exit_code);
     // TODO: 多CPU - 如果线程仍处于Running状态，通过中断提醒对方结束
 }
 

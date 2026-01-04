@@ -31,15 +31,17 @@ static PROCESS_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 // 用户进程
 pub struct Process {
     // 进程ID
-    pub process_id: u64,
+    process_id: u64,
     // 线程ID
-    pub thread_ids: BTreeSet<u64>,
+    pub(super) thread_ids: BTreeSet<u64>,
     // 页表地址
-    pub page_table: NonZeroU64,
+    pub(super) page_table: NonZeroU64,
     // 退出码
     exit_code: watch::Publisher<u64>,
+    // 退出码是否已经设置
+    exit_code_setted: bool,
     // 为其他进程wait预留
-    pub exit_code_sub: watch::Subscriber<u64>,
+    exit_code_sub: watch::Subscriber<u64>,
     // 句柄
     handles: Vec<Option<Arc<HandleObject>>>,
 }
@@ -65,6 +67,7 @@ fn create_process() -> Option<Arc<SpinLock<Process>>> {
         thread_ids: BTreeSet::new(),
         page_table,
         exit_code: publisher,
+        exit_code_setted: false,
         exit_code_sub: subscriber,
         handles: Vec::new(),
     };
@@ -304,19 +307,27 @@ extern "C" fn user_thread_entry() {
 }
 
 pub fn set_exit_code(process: &SpinLock<Process>, exit_code: u64) {
-    process.lock().exit_code.send(exit_code);
+    set_exit_code_with_lock(&mut *process.lock(), exit_code);
 }
 
-pub fn stop_all_thread(process: &SpinLock<Process>) {
+pub fn set_exit_code_with_lock(process: &mut Process, exit_code: u64) {
+    if process.exit_code_setted {
+        return;
+    }
+    process.exit_code.send(exit_code);
+    process.exit_code_setted = true;
+}
+
+pub fn stop_all_thread(process: &SpinLock<Process>, exit_code: u64) {
     let process = process.lock();
     for thread_id in &process.thread_ids {
         if let Some(thread) = multitask::thread::get_thread(*thread_id) {
-            multitask::thread::stop_thread(&thread);
+            multitask::thread::stop_thread(&thread, exit_code);
         }
     }
 }
 
-pub fn stop_process(process_id: u64) {
+pub(super) fn stop_process(process_id: u64) {
     let _guard = IrqGuard::cli();
     PROCESSES.lock().remove(&process_id);
 }
