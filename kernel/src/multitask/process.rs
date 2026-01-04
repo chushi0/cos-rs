@@ -20,7 +20,11 @@ use crate::{
         self,
         page::{AccessMemoryError, AllocateFrameOptions},
     },
-    multitask::{self, elf_loader::ElfLoader},
+    multitask::{
+        self,
+        elf_loader::ElfLoader,
+        thread::{RSP0_SIZE, Thread},
+    },
     sync::{int::IrqGuard, spin::SpinLock},
     trap,
     user::handle::HandleObject,
@@ -32,7 +36,7 @@ static PROCESS_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 // 用户进程
 pub struct Process {
     // 进程ID
-    process_id: u64,
+    pub(super) process_id: u64,
     // 线程ID
     pub(super) thread_ids: BTreeSet<u64>,
     // 页表地址
@@ -251,10 +255,6 @@ pub async fn create_user_process(exe: &str) -> Option<Arc<SpinLock<Process>>> {
         file.close().await.ok()?;
         return None;
     };
-    let process_id = {
-        let _guard = IrqGuard::cli();
-        process.lock().process_id
-    };
 
     // 加载程序段
     let Ok(mut elf) = ElfFile::from_io(file.as_mut()).await else {
@@ -270,25 +270,36 @@ pub async fn create_user_process(exe: &str) -> Option<Arc<SpinLock<Process>>> {
     let entry_point = elf.header().entry_point;
     file.close().await.ok()?;
 
-    // 主线程栈
+    // 主线程用户态栈
     let stack_page = create_process_page(&process, 0x1000, ProcessPageType::Stack)?;
 
-    // 写入启动地址
-    // TODO: 应当写入内核页
+    // 主线程内核陷入栈
+    let rsp0 = unsafe {
+        let _guard = IrqGuard::cli();
+        memory::page::alloc_mapped_frame(
+            memory::page::kernel_pml4(),
+            RSP0_SIZE,
+            AllocateFrameOptions::KERNEL_DATA,
+        )
+    }
+    .ok()?;
+    let rsp0 = rsp0.as_ptr() as usize;
+
+    // 写入启动地址、栈地址
     unsafe {
-        if write_user_process_memory_struct(&process, stack_page.get() + 0x1000 - 8, &entry_point)
-            .is_err()
-        {
-            return None;
-        }
+        *((rsp0 + RSP0_SIZE - 8) as *mut u64) = entry_point;
+        *((rsp0 + RSP0_SIZE - 8 - 8) as *mut u64) = stack_page.get() + 0x1000 - 8;
+        *((rsp0 + RSP0_SIZE - 8 - 16) as *mut u64) = 0;
     }
 
     // 创建线程
+    let _guard = IrqGuard::cli();
     unsafe {
         multitask::thread::create_thread(
-            NonZeroU64::new(process_id),
+            Some(&mut *process.lock()),
             user_thread_entry as u64,
-            stack_page.get() + 0x1000 - 8,
+            rsp0 as u64 + 0x1000 - 8 - 16,
+            rsp0 as u64,
             false,
         );
     }
@@ -296,15 +307,56 @@ pub async fn create_user_process(exe: &str) -> Option<Arc<SpinLock<Process>>> {
     Some(process)
 }
 
+pub fn create_user_thread(
+    process: &SpinLock<Process>,
+    rip: u64,
+    rsp: u64,
+    params: u64,
+) -> Option<Arc<SpinLock<Thread>>> {
+    // 主线程内核陷入栈
+    let rsp0 = unsafe {
+        let _guard = IrqGuard::cli();
+        memory::page::alloc_mapped_frame(
+            memory::page::kernel_pml4(),
+            RSP0_SIZE,
+            AllocateFrameOptions::KERNEL_DATA,
+        )
+    }
+    .ok()?;
+    let rsp0 = rsp0.as_ptr() as usize;
+
+    // 写入启动地址、栈地址
+    unsafe {
+        *((rsp0 + RSP0_SIZE - 8) as *mut u64) = rip;
+        *((rsp0 + RSP0_SIZE - 8 - 8) as *mut u64) = rsp;
+        *((rsp0 + RSP0_SIZE - 8 - 16) as *mut u64) = params;
+    }
+
+    // 创建线程
+    let _guard = IrqGuard::cli();
+    unsafe {
+        multitask::thread::create_thread(
+            Some(&mut *process.lock()),
+            user_thread_entry as u64,
+            rsp0 as u64 + 0x1000 - 8 - 16,
+            rsp0 as u64,
+            false,
+        );
+    }
+
+    None
+}
+
 // 用户线程入口点
 #[unsafe(naked)]
 extern "C" fn user_thread_entry() {
     extern "C" fn enter_user_mode(rip: u64, rsp: u64) -> ! {
-        unsafe { trap::idt::enter_user_mode(rip, rsp) }
+        unsafe { trap::idt::enter_user_mode(rip, rsp, 0) }
     }
     naked_asm!(
-        "mov rdi, [rsp]",
-        "mov rsi, rsp",
+        "mov rdi, [rsp+16]",
+        "mov rsi, [rsp+8]",
+        "mov rdx, [rsp]",
         "jmp {enter_user_mode}",
         enter_user_mode = sym enter_user_mode,
     )

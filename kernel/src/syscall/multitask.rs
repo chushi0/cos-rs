@@ -114,6 +114,33 @@ syscall_handler! {
 }
 
 syscall_handler! {
+    fn create_thread(rip: u64, rsp: u64, params: u64, thread_handle_ptr: u64) -> u64 {
+        if !memory::page::is_user_space_virtual_memory(thread_handle_ptr as usize) {
+            return cos_sys::error::ErrorKind::BadPointer as u64;
+        }
+
+        let process = multitask::process::current_process().unwrap();
+
+        let Some(thread) = multitask::process::create_user_thread(&process, rip, rsp, params) else {
+            return cos_sys::error::ErrorKind::OutOfMemory as u64;
+        };
+        let thread_handle = HandleObject::Thread {
+            thread: Arc::downgrade(&thread),
+            exit: multitask::thread::get_exit_code_subscriber(&thread),
+        };
+        let handle = multitask::process::insert_process_handle(&process, thread_handle);
+
+        unsafe {
+            if multitask::process::write_user_process_memory_struct(&process, thread_handle_ptr, &handle).is_err() {
+                return cos_sys::error::ErrorKind::BadPointer as u64;
+            }
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
     fn join_thread(thread_handle: u64, exit_code_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(exit_code_ptr as usize) {
             return cos_sys::error::ErrorKind::BadPointer as u64;

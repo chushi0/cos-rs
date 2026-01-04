@@ -15,8 +15,8 @@ use alloc::{
 use async_locks::watch;
 
 use crate::{
-    memory::{self, page::AllocateFrameOptions},
-    multitask,
+    memory,
+    multitask::{self, process::Process},
     sync::{
         self,
         int::{IrqGuard, sti},
@@ -33,7 +33,7 @@ static THREAD_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
 // RSP0栈大小（8K）
 const RSP0_PAGE_COUNT: usize = 2;
-const RSP0_SIZE: usize = 0x1000 * RSP0_PAGE_COUNT;
+pub(super) const RSP0_SIZE: usize = 0x1000 * RSP0_PAGE_COUNT;
 
 // 内核线程或用户线程
 pub struct Thread {
@@ -116,7 +116,7 @@ impl Context {
     }
 }
 
-/// 创建线程
+/// 创建用户线程
 ///
 /// 此函数将创建线程，并将线程添加到全局队列中。
 ///
@@ -127,28 +127,21 @@ impl Context {
 /// stack为线程使用的栈位置，注意栈为从高到低增长，且必须对齐到0x8（不能对齐到0x10）。当线程首次使用栈时，需保证此地址可访问，否则会立即触发中断。
 /// initial_suspend表示是否在线程创建后立刻挂起，挂起的线程不会运行。调用方需重新唤起线程，否则线程不会执行。
 pub unsafe fn create_thread(
-    process_id: Option<NonZeroU64>,
+    mut process: Option<&mut Process>,
     start_address: u64,
     stack: u64,
+    rsp0: u64,
     initial_suspend: bool,
 ) -> Option<Arc<SpinLock<Thread>>> {
+    let process_id = if let Some(process) = &mut process {
+        Some(NonZeroU64::new(process.process_id).unwrap())
+    } else {
+        None
+    };
     let thread_id = THREAD_ID_GENERATOR.fetch_add(1, Ordering::SeqCst) + 1;
     let mut context = Context::uninit();
     context.rip = start_address;
     context.rsp = stack;
-    let rsp0 = if process_id.is_some() {
-        let addr = unsafe {
-            memory::page::alloc_mapped_frame(
-                memory::page::kernel_pml4(),
-                RSP0_SIZE,
-                AllocateFrameOptions::KERNEL_DATA,
-            )
-            .ok()?
-        };
-        Some(addr.addr().try_into().expect("usize is u64"))
-    } else {
-        None
-    };
     let (publisher, subscriber) = watch::pair(0);
     let thread = Thread {
         thread_id,
@@ -159,7 +152,7 @@ pub unsafe fn create_thread(
         } else {
             ThreadStatus::Ready
         },
-        rsp0,
+        rsp0: NonZeroU64::new(rsp0),
         exit_code: publisher,
         exit_code_sub: subscriber,
         waker: None,
@@ -173,11 +166,8 @@ pub unsafe fn create_thread(
         READY_THREADS.lock().push_back(Arc::downgrade(&thread));
     }
 
-    if let Some(process_id) = process_id {
-        let process = multitask::process::get_process(process_id.get());
-        if let Some(process) = process {
-            process.lock().thread_ids.insert(thread_id);
-        }
+    if let Some(process) = &mut process {
+        process.thread_ids.insert(thread_id);
     }
 
     Some(thread)

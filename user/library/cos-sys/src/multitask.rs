@@ -86,7 +86,6 @@ pub fn kill_thread(thread_handle: u64) -> Result {
 /// - entry_point: 线程入口点。新线程将从这里开始执行代码。
 /// - stack: 线程使用的栈指针。在进入线程入口点时，保证rsp寄存器被设置为此值。如果为[None]，则由内核创建栈空间。
 /// - params: 可选的参数，在进入入口点时，rdi被设置为此值，以允许向新线程传递参数。
-/// - initial_suspend: 如果为true，新线程会以挂起方式创建，必须在准备好后通过[resume_thread]继续执行
 ///
 /// # ABI
 ///
@@ -111,7 +110,7 @@ pub fn kill_thread(thread_handle: u64) -> Result {
 ///
 /// # 返回
 ///
-/// 如果线程成功，返回新线程的id
+/// 如果线程成功，返回新线程的句柄
 ///
 /// # Safety
 ///
@@ -124,25 +123,22 @@ pub unsafe fn create_thread(
     entry_point: extern "C" fn(u64) -> !,
     stack: Option<NonNull<u8>>,
     params: u64,
-    initial_suspend: bool,
 ) -> Result<u64> {
     let new_rip = entry_point as u64;
     let new_rsp = stack.map_or(0, |stack| stack.as_ptr() as u64);
-    let initial_suspend = initial_suspend as u64;
 
-    let mut new_thread_id = MaybeUninit::<u64>::uninit();
-    let new_thread_id_ptr = new_thread_id.as_mut_ptr() as u64;
+    let mut new_thread_handle = MaybeUninit::<u64>::uninit();
+    let new_thread_handle_ptr = new_thread_handle.as_mut_ptr() as u64;
     let error = unsafe {
         syscall!(
             idx::IDX_THREAD_CREATE,
             new_rip,
             new_rsp,
             params,
-            initial_suspend,
-            new_thread_id_ptr
+            new_thread_handle_ptr
         )
     };
-    SyscallError::to_result(error).map(|_| unsafe { new_thread_id.assume_init() })
+    SyscallError::to_result(error).map(|_| unsafe { new_thread_handle.assume_init() })
 }
 
 /// 获取当前进程
@@ -191,7 +187,7 @@ pub fn wait_process(process_handle: u64) -> Result<u64> {
 }
 
 /// 等待指定线程退出，并获取其退出码
-/// 
+///
 /// 在线程退出后，无法再次通过此函数获取其退出码。
 /// 如果线程当前正在运行，此函数将挂起当前线程。
 /// 使用此函数等待的线程退出后，句柄会被回收。

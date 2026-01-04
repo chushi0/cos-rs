@@ -396,7 +396,7 @@ impl DerefMut for Idt {
 /// 执行后，CPU控制权将交给 rip，并将当前栈指针切换到 rsp，
 /// 此函数用于主动进入用户态，执行用户态代码。
 /// 在内核视角，此函数不会返回。
-pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
+pub unsafe fn enter_user_mode(rip: u64, rsp: u64, rdi: u64) -> ! {
     unsafe {
         asm!(
             // 构造栈帧并返回
@@ -411,7 +411,6 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
             "xor rcx, rcx",
             "xor rdx, rdx",
             "xor rsi, rsi",
-            "xor rdi, rdi",
             "xor rbp, rbp",
             "xor r8, r8",
             "xor r9, r9",
@@ -427,6 +426,7 @@ pub unsafe fn enter_user_mode(rip: u64, rsp: u64) -> ! {
             "iretq",
             entry = in(reg) rip,
             stack = in(reg) rsp,
+            in("rdi") rdi,
             options(noreturn),
         )
     }
