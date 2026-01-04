@@ -1,7 +1,12 @@
 use alloc::sync::Arc;
+use async_locks::channel::oneshot;
 
 use crate::{
-    memory, multitask, syscall::SYSCALL_SUCCESS, syscall_handler, user::handle::HandleObject,
+    memory,
+    multitask::{self, thread::thread_yield},
+    syscall::SYSCALL_SUCCESS,
+    syscall_handler,
+    user::handle::HandleObject,
 };
 
 syscall_handler! {
@@ -52,6 +57,38 @@ syscall_handler! {
                 return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn wait_thread(addr: u64, expected: u64) -> u64 {
+        if !memory::page::is_user_space_virtual_memory(addr as usize) {
+            return cos_sys::error::ErrorKind::BadPointer as u64;
+        }
+
+        let process = multitask::process::current_process().unwrap();
+        let (sender, receiver) = oneshot::channel();
+        if multitask::process::register_futex_if_match(&process, addr, expected, sender).is_err() {
+            return cos_sys::error::ErrorKind::BadPointer as u64;
+        }
+
+        let wait = multitask::async_rt::block_on(async move {
+            _ = receiver.recv().await;
+        });
+        if wait.is_err() {
+            thread_yield(true);
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn wake_thread(addr: u64, count: u64) -> u64 {
+        let process = multitask::process::current_process().unwrap();
+        multitask::process::wake_futex(&process, addr, count);
 
         SYSCALL_SUCCESS
     }

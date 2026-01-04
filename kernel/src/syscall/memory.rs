@@ -6,7 +6,7 @@ use crate::{
 };
 
 syscall_handler! {
-    fn syscall_alloc_page(count: u64, addr_ptr: u64) -> u64 {
+    fn alloc_page(count: u64, addr_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(addr_ptr as usize) {
             return cos_sys::error::ErrorKind::BadPointer as u64;
         }
@@ -32,7 +32,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_free_page(addr: u64, count: u64) -> u64 {
+    fn free_page(addr: u64, count: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(addr as usize)
             || !memory::page::is_user_space_virtual_memory((addr + count * 0x1000) as usize) {
             return cos_sys::error::ErrorKind::BadPointer as u64;

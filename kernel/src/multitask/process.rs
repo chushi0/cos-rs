@@ -1,15 +1,16 @@
 use core::{
     arch::naked_asm,
+    mem::MaybeUninit,
     num::NonZeroU64,
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use alloc::{
-    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    collections::{btree_map::BTreeMap, btree_set::BTreeSet, vec_deque::VecDeque},
     sync::Arc,
     vec::Vec,
 };
-use async_locks::watch;
+use async_locks::{channel::oneshot, watch};
 use elf::ElfFile;
 use filesystem::path::PathBuf;
 
@@ -44,6 +45,8 @@ pub struct Process {
     exit_code_sub: watch::Subscriber<u64>,
     // 句柄
     handles: Vec<Option<Arc<HandleObject>>>,
+    // 等待中的线程 (通过wait/wake syscall)
+    futex: BTreeMap<u64, VecDeque<oneshot::Sender<()>>>,
 }
 
 impl Drop for Process {
@@ -70,6 +73,7 @@ fn create_process() -> Option<Arc<SpinLock<Process>>> {
         exit_code_setted: false,
         exit_code_sub: subscriber,
         handles: Vec::new(),
+        futex: BTreeMap::new(),
     };
     let process = Arc::new(SpinLock::new(process));
 
@@ -357,5 +361,56 @@ pub fn get_process_handle(process: &SpinLock<Process>, index: usize) -> Option<A
 pub fn remove_process_handle(process: &SpinLock<Process>, index: usize) {
     if let Some(slot) = process.lock().handles.get_mut(index) {
         *slot = None;
+    }
+}
+
+pub fn register_futex_if_match(
+    process: &SpinLock<Process>,
+    addr: u64,
+    expected: u64,
+    sender: oneshot::Sender<()>,
+) -> Result<(), ProcessMemoryError> {
+    let _guard = IrqGuard::cli();
+    let mut process = process.lock();
+
+    let addr_value = unsafe {
+        let mut addr_value = MaybeUninit::<u64>::uninit();
+        memory::page::read_page_table_memory(
+            process.page_table.get(),
+            addr,
+            &raw mut addr_value as *mut u8,
+            size_of::<u64>(),
+        )
+        .map_err(|e| match e {
+            AccessMemoryError::PageFault => ProcessMemoryError::PageFault,
+        })?;
+        addr_value.assume_init()
+    };
+
+    if addr_value == expected {
+        process.futex.entry(addr).or_default().push_back(sender);
+    }
+
+    Ok(())
+}
+
+pub fn wake_futex(process: &SpinLock<Process>, addr: u64, count: u64) {
+    let _guard = IrqGuard::cli();
+    let mut process = process.lock();
+
+    let Some(queue) = process.futex.get_mut(&addr) else {
+        return;
+    };
+
+    for _ in 0..count {
+        if let Some(sender) = queue.pop_front() {
+            drop(sender); // 接受者仍然会被唤醒并收到SenderLost
+            continue;
+        }
+        break;
+    }
+
+    if queue.is_empty() {
+        process.futex.remove(&addr);
     }
 }

@@ -48,25 +48,20 @@ pub fn current_thread() -> Result<u64> {
     SyscallError::to_result(error).map(|_| unsafe { thread_handle.assume_init() })
 }
 
-/// 挂起线程
+/// 条件挂起线程
 ///
-/// 将线程从就绪或运行状态切换为挂起状态，不再被调度器执行。
-/// 传入的线程id可以为当前线程，也可以为当前进程内的其他线程。
-///
-/// 线程被手动挂起后，除非调用[resume_thread]，否则永不执行。
-pub fn suspend_thread(thread_id: u64) -> Result {
-    let error = unsafe { syscall!(idx::IDX_THREAD_SUSPEND, thread_id) };
+/// 当 *addr == expected 时，将当前线程挂起，直到调用 [wake_thread] 唤醒。
+/// 如果 *addr != expected，则立即返回，不会挂起线程
+pub fn wait_thread(addr: *const u64, expected: u64) -> Result {
+    let error = unsafe { syscall!(idx::IDX_THREAD_WAIT, addr as u64, expected) };
     SyscallError::to_result(error)
 }
 
-/// 恢复线程
+/// 唤醒线程
 ///
-/// 将线程从挂起状态切换为就绪状态，由调度器继续执行。
-/// 传入的线程id为当前进程内的其他线程。
-///
-/// 如果目标线程不是手动挂起的线程，则返回 [crate::error::ErrorKind::PermissionDenied]
-pub fn resume_thread(thread_id: u64) -> Result {
-    let error = unsafe { syscall!(idx::IDX_THREAD_RESUME, thread_id) };
+/// 唤醒最多count个被 [wait_thread] 挂起的线程
+pub fn wake_thread(addr: *const u64, count: u64) -> Result {
+    let error = unsafe { syscall!(idx::IDX_THREAD_WAKE, addr as u64, count) };
     SyscallError::to_result(error)
 }
 
@@ -192,5 +187,17 @@ pub fn wait_process(process_handle: u64) -> Result<u64> {
     let mut exit_code = MaybeUninit::<u64>::uninit();
     let exit_code_ptr = exit_code.as_mut_ptr() as u64;
     let error = unsafe { syscall!(idx::IDX_PROCESS_WAIT, process_handle, exit_code_ptr) };
+    SyscallError::to_result(error).map(|_| unsafe { exit_code.assume_init() })
+}
+
+/// 等待指定线程退出，并获取其退出码
+/// 
+/// 在线程退出后，无法再次通过此函数获取其退出码。
+/// 如果线程当前正在运行，此函数将挂起当前线程。
+/// 使用此函数等待的线程退出后，句柄会被回收。
+pub fn join_thread(thread_handle: u64) -> Result<u64> {
+    let mut exit_code = MaybeUninit::<u64>::uninit();
+    let exit_code_ptr = exit_code.as_mut_ptr() as u64;
+    let error = unsafe { syscall!(idx::IDX_THREAD_JOIN, thread_handle, exit_code_ptr) };
     SyscallError::to_result(error).map(|_| unsafe { exit_code.assume_init() })
 }

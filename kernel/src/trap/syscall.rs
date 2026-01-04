@@ -133,7 +133,25 @@ extern "C" fn syscall_entry() {
         // 中断处理函数调用结束
         "1:",
         // 检查线程状态
+        "push rax",
+        "push rdi",
+        "push rsi",
+        "push rdx",
+        "push rcx",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
         "call {thread_boundry_check}",
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rcx",
+        "pop rdx",
+        "pop rsi",
+        "pop rdi",
+        "pop rax",
         // 关中断
         "cli",
         // 恢复现场
