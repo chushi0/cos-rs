@@ -16,7 +16,7 @@ pub enum ErrorKind {
     Success = 0,
     PermissionDenied = 1,
     OutOfMemory = 2,
-    SegmentationFault = 3,
+    BadPointer = 3,
     BadArgument = 4,
     Unknown = u64::MAX,
 }
@@ -63,7 +63,7 @@ impl ErrorKind {
             Success,
             PermissionDenied,
             OutOfMemory,
-            SegmentationFault,
+            BadPointer,
             BadArgument,
         )
     }
@@ -92,7 +92,7 @@ impl Display for ErrorKind {
             ErrorKind::Success => "the operation is done successful",
             ErrorKind::PermissionDenied => "you do not have permission to do this",
             ErrorKind::OutOfMemory => "system is run out of memory",
-            ErrorKind::SegmentationFault => "application memory broken",
+            ErrorKind::BadPointer => "application memory broken",
             ErrorKind::BadArgument => "bad argument",
             ErrorKind::Unknown => "unknown error",
         };

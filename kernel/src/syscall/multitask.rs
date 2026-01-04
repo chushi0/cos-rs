@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 
 use crate::{
-    memory, multitask, syscall_handler, trap::syscall::SYSCALL_SUCCESS, user::handle::HandleObject,
+    memory, multitask, syscall::SYSCALL_SUCCESS, syscall_handler, user::handle::HandleObject,
 };
 
 syscall_handler! {
@@ -38,7 +38,7 @@ syscall_handler! {
         if !memory::page::is_user_space_virtual_memory(exe_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((exe_ptr + exe_len) as usize) ||
             !memory::page::is_user_space_virtual_memory(process_handle_ptr as usize) {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
         }
 
         let process = multitask::process::current_process().unwrap();
@@ -46,7 +46,7 @@ syscall_handler! {
         let mut exe = alloc::vec![0u8; exe_len as usize];
         unsafe {
             if multitask::process::read_user_process_memory(&process, exe_ptr, exe.as_mut_ptr(), exe_len as usize).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 
@@ -78,7 +78,7 @@ syscall_handler! {
 
         unsafe {
             if multitask::process::write_user_process_memory_struct(&process, process_handle_ptr, &handle).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 
@@ -89,7 +89,7 @@ syscall_handler! {
 syscall_handler! {
     fn syscall_wait_process(process_handle: u64, exit_code_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(exit_code_ptr as usize) {
-            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            return cos_sys::error::ErrorKind::BadPointer as u64;
         }
 
         let process = multitask::process::current_process().unwrap();
@@ -116,7 +116,7 @@ syscall_handler! {
         let code = *exit.borrow();
         unsafe {
             if multitask::process::write_user_process_memory_struct(&process, exit_code_ptr, &code).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 

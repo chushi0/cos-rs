@@ -1,5 +1,5 @@
 use crate::{
-    trap::syscall::SYSCALL_SUCCESS,
+    syscall::SYSCALL_SUCCESS,
     io, memory, multitask, syscall_handler,
     user::handle::{FileHandleObject, HandleObject},
 };
@@ -8,7 +8,7 @@ syscall_handler! {
     fn syscall_file_create(path_ptr: u64, path_len: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(path_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((path_ptr + path_len) as usize) {
-            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            return cos_sys::error::ErrorKind::BadPointer as u64;
         }
 
         let process = multitask::process::current_process().unwrap();
@@ -16,7 +16,7 @@ syscall_handler! {
         let mut path = alloc::vec![0u8; path_len as usize];
         unsafe {
             if multitask::process::read_user_process_memory(&process, path_ptr, path.as_mut_ptr(), path_len as usize).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 
@@ -46,7 +46,7 @@ syscall_handler! {
     fn syscall_file_open(path_ptr: u64, path_len: u64, handle_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(path_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((path_ptr + path_len) as usize) {
-            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            return cos_sys::error::ErrorKind::BadPointer as u64;
         }
 
         let process = multitask::process::current_process().unwrap();
@@ -54,7 +54,7 @@ syscall_handler! {
         let mut path = alloc::vec![0u8; path_len as usize];
         unsafe {
             if multitask::process::read_user_process_memory(&process, path_ptr, path.as_mut_ptr(), path_len as usize).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 
@@ -83,7 +83,7 @@ syscall_handler! {
 
         unsafe {
             if multitask::process::write_user_process_memory_struct(&process, handle_ptr, &handle).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 
@@ -96,7 +96,7 @@ syscall_handler! {
         if !memory::page::is_user_space_virtual_memory(buffer_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((buffer_ptr + buffer_len) as usize) ||
             !memory::page::is_user_space_virtual_memory(read_count_ptr as usize) {
-            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            return cos_sys::error::ErrorKind::BadPointer as u64;
         }
 
         let process = multitask::process::current_process().unwrap();
@@ -127,10 +127,10 @@ syscall_handler! {
 
         unsafe {
             if multitask::process::write_user_process_memory(&process, buffer_ptr, buffer.as_ptr(), read_count as usize).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
             if multitask::process::write_user_process_memory_struct(&process, read_count_ptr, &read_count).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 
@@ -143,7 +143,7 @@ syscall_handler! {
         if !memory::page::is_user_space_virtual_memory(buffer_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((buffer_ptr + buffer_len) as usize) ||
             !memory::page::is_user_space_virtual_memory(write_count_ptr as usize) {
-            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            return cos_sys::error::ErrorKind::BadPointer as u64;
         }
 
         let process = multitask::process::current_process().unwrap();
@@ -155,7 +155,7 @@ syscall_handler! {
         let mut buffer = alloc::vec![0u8; buffer_len as usize];
         unsafe {
             if multitask::process::read_user_process_memory(&process, buffer_ptr, buffer.as_mut_ptr(), buffer_len as usize).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 
@@ -180,7 +180,7 @@ syscall_handler! {
 
         unsafe {
             if multitask::process::write_user_process_memory_struct(&process, write_count_ptr, &read_count).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 
@@ -199,7 +199,7 @@ syscall_handler! {
 syscall_handler! {
     fn syscall_file_get_pos(handle: u64, pos_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(pos_ptr as usize) {
-            return cos_sys::error::ErrorKind::SegmentationFault as u64;
+            return cos_sys::error::ErrorKind::BadPointer as u64;
         }
 
         let process = multitask::process::current_process().unwrap();
@@ -229,7 +229,7 @@ syscall_handler! {
 
         unsafe {
             if multitask::process::write_user_process_memory_struct(&process, pos_ptr, &pos).is_err() {
-                return cos_sys::error::ErrorKind::SegmentationFault as u64;
+                return cos_sys::error::ErrorKind::BadPointer as u64;
             }
         }
 

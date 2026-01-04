@@ -15,6 +15,7 @@ pub mod panicking;
 pub mod sync;
 pub mod trap;
 pub mod user;
+pub mod syscall;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kmain(
