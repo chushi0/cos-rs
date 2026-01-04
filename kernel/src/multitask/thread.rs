@@ -679,3 +679,19 @@ pub fn stop_thread(thread: &SpinLock<Thread>, exit_code: u64) {
 pub fn get_thread(thread_id: u64) -> Option<Arc<SpinLock<Thread>>> {
     THREADS.lock().get(&thread_id).cloned()
 }
+
+pub fn get_exit_code_subscriber(thread: &SpinLock<Thread>) -> watch::Subscriber<u64> {
+    let _guard = IrqGuard::cli();
+    thread.lock().exit_code_sub.clone()
+}
+
+/// 当进入安全区时，调用此函数，检查当前线程是否已经结束
+/// 返回true：表示线程应当结束
+pub fn thread_boundry_check() -> bool {
+    let current_thread = current_thread().unwrap();
+    let status = {
+        let _guard = IrqGuard::cli();
+        current_thread.lock().status
+    };
+    matches!(status, ThreadStatus::Terminating)
+}

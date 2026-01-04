@@ -5,13 +5,17 @@ use async_locks::{mutex::Mutex, watch};
 use filesystem::fs::FileHandle;
 
 use crate::{
-    multitask::{self, process::Process},
+    multitask::{self, process::Process, thread::Thread},
     sync::spin::SpinLock,
 };
 
 pub enum HandleObject {
     Process {
         process: Weak<SpinLock<Process>>,
+        exit: watch::Subscriber<u64>,
+    },
+    Thread {
+        thread: Weak<SpinLock<Thread>>,
         exit: watch::Subscriber<u64>,
     },
     File(FileHandleObject),

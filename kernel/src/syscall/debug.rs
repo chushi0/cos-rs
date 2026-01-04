@@ -1,7 +1,10 @@
 use core::mem::MaybeUninit;
 
 use crate::{
-    io, kprint, kprintln, memory, multitask, sync::{int::IrqGuard, percpu}, syscall::SYSCALL_SUCCESS, syscall_handler
+    io, kprint, kprintln, memory, multitask,
+    sync::{int::IrqGuard, percpu},
+    syscall::SYSCALL_SUCCESS,
+    syscall_handler,
 };
 
 syscall_handler! {
@@ -11,7 +14,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_debug_get_char(char_ptr: u64) -> u64 {
+    fn get_char(char_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(char_ptr as usize) {
             return cos_sys::error::ErrorKind::BadPointer as u64;
         }
@@ -27,6 +30,10 @@ syscall_handler! {
         let char = multitask::async_rt::block_on(async {
             receiver.lock().await.recv().await.unwrap()
         });
+        let char = match char {
+            Ok(ch) => ch,
+            Err(_) => return cos_sys::error::ErrorKind::Unknown as u64,
+        };
 
         unsafe {
             if multitask::process::write_user_process_memory_struct(&process, char_ptr, &char).is_err() {
@@ -39,7 +46,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_debug_put_char(char_ptr: u64) -> u64 {
+    fn put_char(char_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(char_ptr as usize) {
             return cos_sys::error::ErrorKind::BadPointer as u64;
         }

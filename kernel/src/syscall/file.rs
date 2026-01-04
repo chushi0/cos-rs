@@ -5,7 +5,7 @@ use crate::{
 };
 
 syscall_handler! {
-    fn syscall_file_create(path_ptr: u64, path_len: u64) -> u64 {
+    fn create(path_ptr: u64, path_len: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(path_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((path_ptr + path_len) as usize) {
             return cos_sys::error::ErrorKind::BadPointer as u64;
@@ -34,7 +34,11 @@ syscall_handler! {
             sender.send(Ok(())).await;
         });
 
-        let result = multitask::async_rt::block_on(receiver.recv()).unwrap();
+        let result = match multitask::async_rt::block_on(receiver.recv()) {
+            Ok(res) => res,
+            Err(_) => return cos_sys::error::ErrorKind::Unknown as u64,
+        };
+        let result = result.unwrap();
         match result {
             Ok(()) => SYSCALL_SUCCESS,
             Err(error) => error,
@@ -43,7 +47,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_file_open(path_ptr: u64, path_len: u64, handle_ptr: u64) -> u64 {
+    fn open(path_ptr: u64, path_len: u64, handle_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(path_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((path_ptr + path_len) as usize) {
             return cos_sys::error::ErrorKind::BadPointer as u64;
@@ -72,7 +76,12 @@ syscall_handler! {
             sender.send(Ok(handle)).await;
         });
 
-        let handle = multitask::async_rt::block_on(receiver.recv()).unwrap();
+
+        let created_process = match multitask::async_rt::block_on(receiver.recv()) {
+            Ok(res) => res,
+            Err(_) => return cos_sys::error::ErrorKind::Unknown as u64,
+        };
+        let handle = created_process.unwrap();
         let handle = match handle {
             Ok(handle) => handle,
             Err(error) => return error,
@@ -92,7 +101,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_file_read(handle: u64, buffer_ptr: u64, buffer_len: u64, read_count_ptr: u64) -> u64 {
+    fn read(handle: u64, buffer_ptr: u64, buffer_len: u64, read_count_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(buffer_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((buffer_ptr + buffer_len) as usize) ||
             !memory::page::is_user_space_virtual_memory(read_count_ptr as usize) {
@@ -120,7 +129,12 @@ syscall_handler! {
             };
             sender.send(Ok((count, buffer))).await;
         });
-        let (read_count, buffer) = match multitask::async_rt::block_on(receiver.recv()).unwrap() {
+        
+        let block_on = match multitask::async_rt::block_on(receiver.recv()) {
+            Ok(res) => res,
+            Err(_) => return cos_sys::error::ErrorKind::Unknown as u64,
+        };
+        let (read_count, buffer) = match block_on.unwrap() {
             Ok(read) => read,
             Err(error) => return error,
         };
@@ -139,7 +153,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_file_write(handle: u64, buffer_ptr: u64, buffer_len: u64, write_count_ptr: u64) -> u64 {
+    fn write(handle: u64, buffer_ptr: u64, buffer_len: u64, write_count_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(buffer_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((buffer_ptr + buffer_len) as usize) ||
             !memory::page::is_user_space_virtual_memory(write_count_ptr as usize) {
@@ -173,7 +187,11 @@ syscall_handler! {
             };
             sender.send(Ok(count)).await;
         });
-        let read_count = match multitask::async_rt::block_on(receiver.recv()).unwrap() {
+        let read_count = match multitask::async_rt::block_on(receiver.recv()) {
+            Ok(res) => res,
+            Err(_) => return cos_sys::error::ErrorKind::Unknown as u64,
+        };
+        let read_count = match read_count.unwrap() {
             Ok(read_count) => read_count,
             Err(error) => return error,
         };
@@ -189,7 +207,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_file_close(handle: u64) {
+    fn close(handle: u64) {
         let process = multitask::process::current_process().unwrap();
 
         multitask::process::remove_process_handle(&process, handle as usize);
@@ -197,7 +215,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_file_get_pos(handle: u64, pos_ptr: u64) -> u64 {
+    fn get_pos(handle: u64, pos_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(pos_ptr as usize) {
             return cos_sys::error::ErrorKind::BadPointer as u64;
         }
@@ -222,7 +240,11 @@ syscall_handler! {
             };
             sender.send(Ok(count)).await;
         });
-        let pos = match multitask::async_rt::block_on(receiver.recv()).unwrap() {
+        let pos = match multitask::async_rt::block_on(receiver.recv()) {
+            Ok(res) => res,
+            Err(_) => return cos_sys::error::ErrorKind::Unknown as u64,
+        };
+        let pos = match pos.unwrap() {
             Ok(pos) => pos,
             Err(error) => return error,
         };
@@ -238,7 +260,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_file_set_pos(handle: u64, pos: u64) -> u64 {
+    fn set_pos(handle: u64, pos: u64) -> u64 {
         let process = multitask::process::current_process().unwrap();
 
         let Some(handle) = multitask::process::get_process_handle(&process, handle as usize) else {
@@ -259,7 +281,12 @@ syscall_handler! {
             };
             sender.send(Ok(())).await;
         });
-        match multitask::async_rt::block_on(receiver.recv()).unwrap() {
+
+        let error = match multitask::async_rt::block_on(receiver.recv()) {
+            Ok(res) => res,
+            Err(_) => return cos_sys::error::ErrorKind::Unknown as u64,
+        };
+        match error.unwrap() {
             Ok(()) => SYSCALL_SUCCESS,
             Err(error) => error,
         }

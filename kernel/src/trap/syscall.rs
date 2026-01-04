@@ -1,6 +1,6 @@
 use core::arch::{asm, naked_asm};
 
-use crate::sync::percpu;
+use crate::{multitask, sync::percpu};
 
 pub(super) unsafe fn init() {
     const IA32_EFER: u32 = 0xc0000080;
@@ -132,6 +132,8 @@ extern "C" fn syscall_entry() {
         "mov rax, {syscall_not_found}",
         // 中断处理函数调用结束
         "1:",
+        // 检查线程状态
+        "call {thread_boundry_check}",
         // 关中断
         "cli",
         // 恢复现场
@@ -149,6 +151,7 @@ extern "C" fn syscall_entry() {
         syscall_stack_offset = const percpu::OFFSET_SYSCALL_STACK,
         query_syscall_handler = sym query_syscall_handler,
         syscall_not_found = const cos_sys::error::ErrorKind::BadArgument as u64,
+        thread_boundry_check = sym boundry_check,
     )
 }
 
@@ -165,5 +168,13 @@ unsafe extern "C" fn query_syscall_handler(id: u64, ptr: *mut u64) {
         .map_or(0, |index| crate::syscall::SYSCALL_HANDLER[index].1 as u64);
     unsafe {
         *ptr = handler;
+    }
+}
+
+extern "C" fn boundry_check() {
+    // 在返回用户态前检查线程执行状态，如果已经结束，则让出线程
+    if multitask::thread::thread_boundry_check() {
+        multitask::thread::thread_yield(true);
+        unreachable!()
     }
 }

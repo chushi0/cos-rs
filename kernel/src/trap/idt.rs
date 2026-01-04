@@ -106,28 +106,38 @@ pub(super) unsafe fn init() {
     // Safety: 由调用者保证无并发
     unsafe {
         MAIN_CPU_IDT[Idt::INDEX_DIVIDE_ERROR].set_function_pointer(soft::divide_by_zero);
+        MAIN_CPU_IDT[Idt::INDEX_DIVIDE_ERROR].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_DIVIDE_ERROR].enable();
         MAIN_CPU_IDT[Idt::INDEX_BREAKPOINT].set_function_pointer(soft::breakpoint);
+        MAIN_CPU_IDT[Idt::INDEX_BREAKPOINT].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_BREAKPOINT].enable_user_trigger();
         MAIN_CPU_IDT[Idt::INDEX_BREAKPOINT].enable();
         MAIN_CPU_IDT[Idt::INDEX_INVALID_OPCODE].set_function_pointer(soft::invalid_opcode);
+        MAIN_CPU_IDT[Idt::INDEX_INVALID_OPCODE].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_INVALID_OPCODE].enable();
         MAIN_CPU_IDT[Idt::INDEX_DOUBLE_FAULT].set_function_pointer(soft::double_fault);
+        MAIN_CPU_IDT[Idt::INDEX_DOUBLE_FAULT].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_DOUBLE_FAULT].set_stack_index(tss::DF_IST);
         MAIN_CPU_IDT[Idt::INDEX_DOUBLE_FAULT].enable();
         MAIN_CPU_IDT[Idt::INDEX_INVALID_TSS].set_function_pointer(soft::invalid_tss);
+        MAIN_CPU_IDT[Idt::INDEX_INVALID_TSS].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_INVALID_TSS].enable();
         MAIN_CPU_IDT[Idt::INDEX_SEGMENT_NOT_PRESENT]
             .set_function_pointer(soft::segment_not_present);
+        MAIN_CPU_IDT[Idt::INDEX_SEGMENT_NOT_PRESENT].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_SEGMENT_NOT_PRESENT].enable();
         MAIN_CPU_IDT[Idt::INDEX_STACK_SEGMENT_FAULT]
             .set_function_pointer(soft::stack_segment_fault);
+        MAIN_CPU_IDT[Idt::INDEX_STACK_SEGMENT_FAULT].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_STACK_SEGMENT_FAULT].enable();
         MAIN_CPU_IDT[Idt::INDEX_GENERAL_PROTECTION].set_function_pointer(soft::general_protection);
+        MAIN_CPU_IDT[Idt::INDEX_GENERAL_PROTECTION].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_GENERAL_PROTECTION].enable();
         MAIN_CPU_IDT[Idt::INDEX_PAGE_FAULT].set_function_pointer(soft::page_fault);
+        MAIN_CPU_IDT[Idt::INDEX_PAGE_FAULT].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_PAGE_FAULT].enable();
         MAIN_CPU_IDT[Idt::INDEX_ALIGNMENT_CHECK].set_function_pointer(soft::alignment_check);
+        MAIN_CPU_IDT[Idt::INDEX_ALIGNMENT_CHECK].disable_interrupt();
         MAIN_CPU_IDT[Idt::INDEX_ALIGNMENT_CHECK].enable();
 
         MAIN_CPU_IDT[hard::INDEX_TIMER].set_function_pointer(hard::timer_irq);
@@ -441,6 +451,10 @@ macro_rules! interrupt_handler {
                 }
                 $name($stack);
                 if !kernel_gs {
+                    if multitask::thread::thread_boundry_check() {
+                        multitask::thread::thread_yield(true);
+                        unreachable!();
+                    }
                     unsafe {
                         ::core::arch::asm!("swapgs");
                     }
@@ -498,6 +512,10 @@ macro_rules! interrupt_handler {
                 }
                 $name($stack);
                 if !kernel_gs {
+                    if multitask::thread::thread_boundry_check() {
+                        multitask::thread::thread_yield(true);
+                        unreachable!();
+                    }
                     unsafe {
                         ::core::arch::asm!("swapgs");
                     }

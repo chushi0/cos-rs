@@ -40,12 +40,12 @@ pub fn exit_thread(code: u64) -> ! {
 
 /// 获取当前线程
 ///
-/// 获取当前执行的线程，返回 u64 表示线程id，并可用于其他系统调用
+/// 获取当前执行的线程，返回 u64 表示线程句柄，并可用于其他系统调用
 pub fn current_thread() -> Result<u64> {
-    let mut thread_id = MaybeUninit::<u64>::uninit();
-    let thread_id_ptr = thread_id.as_mut_ptr() as u64;
-    let error = unsafe { syscall!(idx::IDX_THREAD_CURRENT, thread_id_ptr) };
-    SyscallError::to_result(error).map(|_| unsafe { thread_id.assume_init() })
+    let mut thread_handle = MaybeUninit::<u64>::uninit();
+    let thread_handle_ptr = thread_handle.as_mut_ptr() as u64;
+    let error = unsafe { syscall!(idx::IDX_THREAD_CURRENT, thread_handle_ptr) };
+    SyscallError::to_result(error).map(|_| unsafe { thread_handle.assume_init() })
 }
 
 /// 挂起线程
@@ -77,8 +77,8 @@ pub fn resume_thread(thread_id: u64) -> Result {
 ///
 /// 对于用户程序而言，避免使用这种方式停止线程，因为它不能保证线程在何时被停止，
 /// 线程可能来不及回收其资源。
-pub fn kill_thread(thread_id: u64) -> Result {
-    let error = unsafe { syscall!(idx::IDX_THREAD_KILL, thread_id) };
+pub fn kill_thread(thread_handle: u64) -> Result {
+    let error = unsafe { syscall!(idx::IDX_THREAD_KILL, thread_handle) };
     SyscallError::to_result(error)
 }
 

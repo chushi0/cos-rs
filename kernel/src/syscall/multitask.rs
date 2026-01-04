@@ -5,7 +5,7 @@ use crate::{
 };
 
 syscall_handler! {
-    fn syscall_exit(code: u64) {
+    fn exit_process(code: u64) {
         // 在thread_yield执行前，必须释放全部临时对象
         // 因为thread_yield不会再返回，若不释放会导致内存泄漏
         {
@@ -22,7 +22,7 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_exit_thread(code: u64) {
+    fn exit_thread(code: u64) {
         {
             let current_thread = multitask::thread::current_thread().unwrap();
             multitask::thread::stop_thread(&current_thread, code);
@@ -34,7 +34,114 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_create_process(exe_ptr: u64, exe_len: u64, process_handle_ptr: u64) -> u64 {
+    fn current_thread(thread_handle_ptr: u64) -> u64 {
+        if !memory::page::is_user_space_virtual_memory(thread_handle_ptr as usize) {
+            return  cos_sys::error::ErrorKind::BadPointer as u64;
+        }
+
+        let process = multitask::process::current_process().unwrap();
+        let thread = multitask::thread::current_thread().unwrap();
+        let thread_handle = HandleObject::Thread {
+            thread: Arc::downgrade(&thread),
+            exit: multitask::thread::get_exit_code_subscriber(&thread),
+        };
+        let handle = multitask::process::insert_process_handle(&process, thread_handle);
+
+        unsafe {
+            if multitask::process::write_user_process_memory_struct(&process, thread_handle_ptr, &handle).is_err() {
+                return cos_sys::error::ErrorKind::BadPointer as u64;
+            }
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn kill_thread(thread_handle: u64) -> u64 {
+        let process = multitask::process::current_process().unwrap();
+        let Some(thread_handle) = multitask::process::get_process_handle(&process, thread_handle as usize) else {
+            return cos_sys::error::ErrorKind::BadArgument as u64;
+        };
+
+        let HandleObject::Thread { thread, .. } = &*thread_handle else {
+            return cos_sys::error::ErrorKind::BadArgument as u64;
+        };
+
+        if let Some(thread) = thread.upgrade() {
+            multitask::thread::stop_thread(&thread, cos_sys::multitask::EXIT_KILL);
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn join_thread(thread_handle: u64, exit_code_ptr: u64) -> u64 {
+        if !memory::page::is_user_space_virtual_memory(exit_code_ptr as usize) {
+            return cos_sys::error::ErrorKind::BadPointer as u64;
+        }
+
+        let process = multitask::process::current_process().unwrap();
+
+        let Some(handle) = multitask::process::get_process_handle(&process, thread_handle as usize) else {
+            return cos_sys::error::ErrorKind::BadArgument as u64;
+        };
+
+        let HandleObject::Thread { exit, .. } = &*handle else {
+            return cos_sys::error::ErrorKind::BadArgument as u64;
+        };
+
+        let mut exit = exit.clone();
+        let block_on = multitask::async_rt::block_on(async {
+            loop {
+                if exit.wait().await.is_err() {
+                    break;
+                }
+            }
+        });
+        if block_on.is_err() {
+            return cos_sys::error::ErrorKind::Unknown as u64;
+        }
+
+        multitask::process::remove_process_handle(&process, thread_handle as usize);
+
+        let code = *exit.borrow();
+        unsafe {
+            if multitask::process::write_user_process_memory_struct(&process, exit_code_ptr, &code).is_err() {
+                return cos_sys::error::ErrorKind::BadPointer as u64;
+            }
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn current_process(process_handle_ptr: u64) -> u64 {
+        if !memory::page::is_user_space_virtual_memory(process_handle_ptr as usize) {
+            return  cos_sys::error::ErrorKind::BadPointer as u64;
+        }
+
+        let process = multitask::process::current_process().unwrap();
+        let process_handle = HandleObject::Process {
+            process: Arc::downgrade(&process),
+            exit: multitask::process::get_exit_code_subscriber(&process),
+        };
+        let handle = multitask::process::insert_process_handle(&process, process_handle);
+
+        unsafe {
+            if multitask::process::write_user_process_memory_struct(&process, process_handle_ptr, &handle).is_err() {
+                return cos_sys::error::ErrorKind::BadPointer as u64;
+            }
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn create_process(exe_ptr: u64, exe_len: u64, process_handle_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(exe_ptr as usize) ||
             !memory::page::is_user_space_virtual_memory((exe_ptr + exe_len) as usize) ||
             !memory::page::is_user_space_virtual_memory(process_handle_ptr as usize) {
@@ -64,7 +171,11 @@ syscall_handler! {
             }
         });
 
-        let created_process = match multitask::async_rt::block_on(receiver.recv()).unwrap() {
+        let created_process = match multitask::async_rt::block_on(receiver.recv()) {
+            Ok(res) => res,
+            Err(_) => return cos_sys::error::ErrorKind::Unknown as u64,
+        };
+        let created_process = match created_process.unwrap() {
             Ok(process) => process,
             Err(err) => return err as u64,
         };
@@ -87,7 +198,27 @@ syscall_handler! {
 }
 
 syscall_handler! {
-    fn syscall_wait_process(process_handle: u64, exit_code_ptr: u64) -> u64 {
+    fn kill_process(process_handle: u64) -> u64 {
+        let process = multitask::process::current_process().unwrap();
+        let Some(process_handle) = multitask::process::get_process_handle(&process, process_handle as usize) else {
+            return cos_sys::error::ErrorKind::BadArgument as u64;
+        };
+
+        let HandleObject::Process { process, .. } = &*process_handle else {
+            return cos_sys::error::ErrorKind::BadArgument as u64;
+        };
+
+        if let Some(process) = process.upgrade() {
+            multitask::process::set_exit_code(&process, cos_sys::multitask::EXIT_KILL);
+            multitask::process::stop_all_thread(&process, cos_sys::multitask::EXIT_KILL);
+        }
+
+        SYSCALL_SUCCESS
+    }
+}
+
+syscall_handler! {
+    fn wait_process(process_handle: u64, exit_code_ptr: u64) -> u64 {
         if !memory::page::is_user_space_virtual_memory(exit_code_ptr as usize) {
             return cos_sys::error::ErrorKind::BadPointer as u64;
         }
@@ -103,13 +234,16 @@ syscall_handler! {
         };
 
         let mut exit = exit.clone();
-        multitask::async_rt::block_on(async {
+        let block_on = multitask::async_rt::block_on(async {
             loop {
                 if exit.wait().await.is_err() {
                     break;
                 }
             }
         });
+        if block_on.is_err() {
+            return cos_sys::error::ErrorKind::Unknown as u64;
+        }
 
         multitask::process::remove_process_handle(&process, process_handle as usize);
 

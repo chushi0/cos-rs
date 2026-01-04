@@ -295,6 +295,8 @@ impl BlockOnWakerInner {
     }
 }
 
+pub struct ThreadTerminated;
+
 /// 在当前线程上执行异步任务
 ///
 /// 与[spawn]不同，此函数**不会**将异步任务放在堆上，并且会在当前栈中执行，栈空间可能不会太多。
@@ -303,7 +305,7 @@ impl BlockOnWakerInner {
 /// 当异步任务返回[Poll::Pending]时，会**挂起**当前线程，直到在其结构体上调用[Waker::wake]或[Waker::wake_by_ref]。
 ///
 /// 由于异步任务特性，执行时会强制打开中断。但在函数返回后，会将中断复原为原状态。
-pub fn block_on<Fut>(future: Fut) -> Fut::Output
+pub fn block_on<Fut>(future: Fut) -> Result<Fut::Output, ThreadTerminated>
 where
     Fut: Future,
 {
@@ -324,13 +326,19 @@ where
     loop {
         // 标记pending=true，表示当前返回后需要等待
         *waker_inner.pending.lock() = true;
+
+        // 检查线程是否需要退出
+        if multitask::thread::thread_boundry_check() {
+            return Err(ThreadTerminated);
+        }
+
         // 执行异步任务
         let mut cx = Context::from_waker(&waker);
         let result = future.as_mut().poll(&mut cx);
 
         // 检查结果
         if let Poll::Ready(result) = result {
-            return result;
+            return Ok(result);
         }
 
         // 如果已经被唤醒了，立刻再次调用poll
