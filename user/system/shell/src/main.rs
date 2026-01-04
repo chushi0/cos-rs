@@ -9,7 +9,7 @@ extern crate rlibc;
 use cos_sys::{
     debug::{get_char, put_char},
     file::{close, open, read},
-    multitask::exit,
+    multitask::{exit, sleep_thread},
 };
 
 cos_heap::default_heap!();
@@ -82,6 +82,15 @@ fn process_command(cmd: &[u8]) -> bool {
         print(msg);
         print(b"\n");
         return false;
+    }
+
+    if let Some(time) = cmd.strip_prefix(b"sleep ") {
+        if let Some(time_in_ms) = str::from_utf8(time)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            sleep_thread(time_in_ms / 1000, time_in_ms % 1000 * 1000).unwrap();
+        }
     }
 
     print(b"Unsupported Command, type `help` to see help message.\n\n");
