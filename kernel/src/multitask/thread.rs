@@ -671,6 +671,9 @@ pub fn stop_thread(thread: &SpinLock<Thread>, exit_code: u64) {
     thread.exit_code.send(exit_code);
     // 如果此线程正在等待，将其唤醒
     if let Some(waker) = &thread.waker {
+        // waker会访问thread，先释放锁
+        let waker = waker.clone();
+        drop(thread);
         waker.wake_by_ref();
     }
     // TODO: 多CPU - 如果线程仍处于Running状态，通过中断提醒对方结束
