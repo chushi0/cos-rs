@@ -47,8 +47,8 @@ pub(super) unsafe fn init() {
         asm!(
             "wrmsr",
             in("ecx") IA32_LSTAR,
-            in("eax") ((syscall_entry as u64) & 0xFFFF_FFFF) as u32,
-            in("edx") (((syscall_entry as u64) >> 32) & 0xFFFF_FFFF) as u32,
+            in("eax") ((syscall_entry as *const() as u64) & 0xFFFF_FFFF) as u32,
+            in("edx") (((syscall_entry as *const() as u64) >> 32) & 0xFFFF_FFFF) as u32,
             options(nostack, preserves_flags)
         );
     }

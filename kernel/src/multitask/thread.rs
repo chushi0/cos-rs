@@ -192,7 +192,7 @@ pub fn create_idle_thread() {
     let thread_id = THREAD_ID_GENERATOR.fetch_add(1, Ordering::SeqCst) + 1;
     let mut context = Context::uninit();
     context.rsp = stack;
-    context.rip = idle_thread_entry as u64;
+    context.rip = idle_thread_entry as *const () as u64;
     let (publisher, subscriber) = watch::pair(0);
     let thread = Thread {
         thread_id,

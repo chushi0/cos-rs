@@ -151,6 +151,8 @@ pub trait BlockDevice: Send + Sync + 'static {
 pub enum BlockDeviceError {
     /// 索引范围或缓冲区范围越界
     OutOfBounds,
+    /// 内存不足
+    OutOfMemory,
     /// 底层IO错误
     IoError,
     #[cfg(feature = "dyn-io-error")]

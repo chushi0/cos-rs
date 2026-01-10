@@ -297,7 +297,7 @@ pub async fn create_user_process(exe: &str) -> Option<Arc<SpinLock<Process>>> {
     unsafe {
         multitask::thread::create_thread(
             Some(&mut *process.lock()),
-            user_thread_entry as u64,
+            user_thread_entry as *const () as u64,
             rsp0 as u64 + RSP0_SIZE as u64 - 8 - 16,
             rsp0 as u64,
             false,
@@ -337,7 +337,7 @@ pub fn create_user_thread(
     unsafe {
         multitask::thread::create_thread(
             Some(&mut *process.lock()),
-            user_thread_entry as u64,
+            user_thread_entry as *const () as u64,
             rsp0 as u64 + RSP0_SIZE as u64 - 8 - 16,
             rsp0 as u64,
             false,

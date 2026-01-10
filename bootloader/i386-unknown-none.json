@@ -10,7 +10,7 @@
     "panic-strategy": "abort",
     "relocation-model": "static",
     "code-model": "kernel",
-    "target-pointer-width": "32",
+    "target-pointer-width": 32,
     "rustc-abi": "x86-softfloat",
     "pre-link-args": {
         "ld.lld": [

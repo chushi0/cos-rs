@@ -21,3 +21,4 @@ elf = {path = "../library/elf"}
 filesystem = {path = "../library/filesystem"}
 heap = {path = "../library/heap"}
 rlibc = "1.0.0"
+try_alloc = {path = "../library/try_alloc"}
