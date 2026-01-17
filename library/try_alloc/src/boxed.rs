@@ -13,6 +13,10 @@ pub trait TryBox<T> {
         Self: Sized;
 }
 
+/// 将指针对应内存释放，不调用Drop
+/// 
+/// Safety:
+/// ptr必须来自全局分配器，且兼容Box内存
 pub(crate) unsafe fn dealloc_box<T>(ptr: *mut T) {
     // 对于 ZST，box默认不会申请内存，而是使用特殊指针代替，因此不能释放
     if size_of::<T>() == 0 {

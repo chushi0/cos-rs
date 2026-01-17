@@ -10,7 +10,6 @@ use core::{
     cell::Cell,
     marker::PhantomData,
     mem::{forget, offset_of},
-    num::NonZeroUsize,
     ops::Deref,
     ptr::NonNull,
     sync::atomic::{AtomicUsize, Ordering},
@@ -22,6 +21,7 @@ use crate::{
     boxed::{TryBox, dealloc_box},
     clone::TryClone,
     error::AllocError,
+    ptr::{dangling, is_dangling},
 };
 
 /// 共享强引用的通用表示
@@ -238,9 +238,7 @@ impl<T> WeakLike<T> for WeakRc<T> {
     type Strong = TryRc<T>;
 
     fn new() -> Self {
-        Self {
-            ptr: NonNull::without_provenance(NonZeroUsize::MAX),
-        }
+        Self { ptr: dangling() }
     }
 
     fn into_raw(this: Self) -> *const T {
@@ -474,9 +472,7 @@ impl<T> WeakLike<T> for WeakArc<T> {
     type Strong = TryArc<T>;
 
     fn new() -> Self {
-        Self {
-            ptr: NonNull::without_provenance(NonZeroUsize::MAX),
-        }
+        Self { ptr: dangling() }
     }
 
     fn into_raw(this: Self) -> *const T {
@@ -591,9 +587,6 @@ impl<T> InnerLike<T> for ArcInner<T> {
     }
 }
 
-fn is_dangling<T: ?Sized>(ptr: *const T) -> bool {
-    (ptr.cast::<()>()).addr() == usize::MAX
-}
 #[cfg(test)]
 mod test {
     use super::*;

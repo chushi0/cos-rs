@@ -14,3 +14,5 @@ pub mod iter;
 pub mod rc;
 pub mod string;
 pub mod vec;
+
+pub(crate) mod ptr;
